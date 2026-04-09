@@ -10,6 +10,8 @@ def mem_conn():
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
-    setup_schema(conn)
-    yield conn
-    conn.close()
+    try:
+        setup_schema(conn)
+        yield conn
+    finally:
+        conn.close()

@@ -3,7 +3,7 @@ import cclog
 
 
 def test_package_importable():
-    assert cclog is not None
+    assert hasattr(cclog, "__version__")
 
 
 def test_version_string():
