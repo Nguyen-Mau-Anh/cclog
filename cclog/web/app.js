@@ -33,6 +33,11 @@ function relativeTime(ms) {
     return `${Math.floor(diff / 86_400_000)}d ago`;
 }
 
+function toLocalDateTimeString(ms) {
+    const d = new Date(ms);
+    return new Date(ms - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 function formatTime(ms) {
     if (!ms) return '—';
     return new Date(ms).toLocaleString(undefined, {
@@ -342,8 +347,8 @@ function renderDetail(session) {
         rangeSelect.value = eventsTimeRange === -1 ? 'custom' : String(eventsTimeRange);
         if (eventsTimeRange === -1 && eventsCustomInputs) {
             eventsCustomInputs.style.display = 'inline-flex';
-            if (eventsFromInput && eventsCustomFrom) eventsFromInput.value = new Date(eventsCustomFrom).toISOString().slice(0, 16);
-            if (eventsToInput && eventsCustomTo) eventsToInput.value = new Date(eventsCustomTo).toISOString().slice(0, 16);
+            if (eventsFromInput && eventsCustomFrom !== null) eventsFromInput.value = toLocalDateTimeString(eventsCustomFrom);
+            if (eventsToInput && eventsCustomTo !== null) eventsToInput.value = toLocalDateTimeString(eventsCustomTo);
         }
 
         rangeSelect.addEventListener('change', (e) => {
@@ -362,12 +367,12 @@ function renderDetail(session) {
         eventsFromInput?.addEventListener('input', (e) => {
             e.stopPropagation();
             eventsCustomFrom = e.target.value ? new Date(e.target.value).getTime() : null;
-            if (currentDetailData) renderDetail(currentDetailData);
+            if (currentDetailData) { renderDetail(currentDetailData); document.getElementById('events-from-input')?.focus(); }
         });
         eventsToInput?.addEventListener('input', (e) => {
             e.stopPropagation();
             eventsCustomTo = e.target.value ? new Date(e.target.value).getTime() + 59_999 : null;
-            if (currentDetailData) renderDetail(currentDetailData);
+            if (currentDetailData) { renderDetail(currentDetailData); document.getElementById('events-to-input')?.focus(); }
         });
     }
 
