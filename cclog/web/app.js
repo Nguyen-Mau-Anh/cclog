@@ -287,6 +287,20 @@ function renderDetail(session) {
     }
 }
 
+// ── Silent detail refresh (no loading flash) ──────────────────────────────
+
+async function refreshDetailSilent(id) {
+    // Re-fetch and re-render detail WITHOUT clearing the panel first
+    try {
+        const resp = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        renderDetail(data);
+    } catch (err) {
+        // silently ignore — panel keeps showing last known data
+    }
+}
+
 // ── API fetching ──────────────────────────────────────────────────────────
 
 async function fetchSessions() {
@@ -317,7 +331,7 @@ function connectSSE() {
                 await fetchSessions();
                 // If detail panel is showing this session, refresh it
                 if (selectedSessionId === data.session_id) {
-                    selectSession(data.session_id);
+                    refreshDetailSilent(data.session_id);
                 }
             }
         } catch (err) {
@@ -362,4 +376,10 @@ function escapeAttr(str) {
 
 fetchSessions();
 connectSSE();
-setInterval(updateAllTimestamps, 30_000);
+setInterval(updateAllTimestamps, 10_000);
+setInterval(async () => {
+    await fetchSessions();
+    if (selectedSessionId) {
+        refreshDetailSilent(selectedSessionId);
+    }
+}, 15_000);
