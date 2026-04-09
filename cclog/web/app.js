@@ -84,14 +84,16 @@ function filteredSessions() {
         if (statusFilter === 'active' && s.status !== 'active') return false;
         if (statusFilter === 'active_idle' && s.status === 'closed') return false;
 
-        // Date range filter (based on session last_active; fall back to started_at)
+        // Date range filter:
+        //   filterFrom: session must have been active at or after this time (uses last_active, falls back to started_at)
+        //   filterTo:   session must have started at or before this time (uses started_at, falls back to last_active)
         if (filterFrom !== null) {
-            const active = s.last_active || s.started_at;
-            if (active === null || active < filterFrom) return false;
+            const active = s.last_active ?? s.started_at;
+            if (active == null || active < filterFrom) return false;
         }
         if (filterTo !== null) {
-            const start = s.started_at || s.last_active;
-            if (start === null || start > filterTo) return false;
+            const sessionStart = s.started_at ?? s.last_active;
+            if (sessionStart == null || sessionStart > filterTo) return false;
         }
 
         // Search filter
