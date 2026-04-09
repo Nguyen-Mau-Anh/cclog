@@ -253,7 +253,8 @@ def cmd_sessions(args) -> None:
         params.append(to_ms)
 
     having_sql = ("HAVING " + " AND ".join(having_clauses)) if having_clauses else ""
-    limit_sql = "LIMIT 20" if not show_all and not having_clauses else ""
+    explicit_time_filter = from_ms is not None or to_ms is not None
+    limit_sql = "LIMIT 20" if not show_all and not explicit_time_filter else ""
 
     sql = f"""
         SELECT s.id, s.cwd, s.name, s.started_at,
@@ -290,6 +291,7 @@ def cmd_sessions(args) -> None:
     table.add_column("Calls", justify="right")
     table.add_column("Cost", justify="right")
 
+    now_ms = int(time.time() * 1000)
     active_cutoff_ms = now_ms - 30 * 60 * 1000  # 30 minutes ago
 
     for row in rows:

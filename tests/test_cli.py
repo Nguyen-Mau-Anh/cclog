@@ -140,7 +140,7 @@ def test_parse_datetime_arg_datetime():
 def test_parse_datetime_arg_invalid():
     import argparse
     from cclog.cli import _parse_datetime_arg
-    with pytest.raises((argparse.ArgumentTypeError, ValueError)):
+    with pytest.raises(argparse.ArgumentTypeError):
         _parse_datetime_arg("not-a-date")
 
 def test_cmd_sessions_from_filter(tmp_path, monkeypatch):
@@ -153,7 +153,7 @@ def test_cmd_sessions_from_filter(tmp_path, monkeypatch):
     setup_schema(conn)
     # Insert session with last_active in the past
     past_ms = int(datetime(2026, 1, 1).timestamp() * 1000)
-    conn.execute("INSERT INTO sessions VALUES ('old-sess', ?, NULL, '/old', NULL)", (past_ms,))
+    conn.execute("INSERT INTO sessions (id, started_at, cwd) VALUES ('old-sess', ?, '/old')", (past_ms,))
     conn.commit(); conn.close()
     monkeypatch.setenv("CCLOG_DB", str(db))
     args = argparse.Namespace(all=True, from_dt=int(datetime(2026, 3, 1).timestamp()*1000), to_dt=None)
