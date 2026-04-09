@@ -23,9 +23,19 @@ def _load_yaml_overrides(path: str) -> Dict[str, Dict[str, float]]:
         import yaml  # type: ignore
         with open(path) as f:
             data = yaml.safe_load(f)
-        if isinstance(data, dict) and all(isinstance(v, dict) for v in data.values()):
-            return data
-        return {}
+        if not isinstance(data, dict):
+            return {}
+        validated = {}
+        for model, prices in data.items():
+            if (
+                isinstance(prices, dict)
+                and "input" in prices
+                and "output" in prices
+                and isinstance(prices["input"], (int, float))
+                and isinstance(prices["output"], (int, float))
+            ):
+                validated[model] = prices
+        return validated
     except Exception:
         return {}
 
@@ -37,6 +47,8 @@ def get_cost_usd(
     yaml_path: Optional[str] = None,
 ) -> Optional[float]:
     """Return estimated cost in USD, or None if the model is unknown."""
+    input_tok = max(0, input_tok)   # clamp negative values to 0
+    output_tok = max(0, output_tok)  # clamp negative values to 0
     table = dict(PRICE_TABLE)
     override_path = yaml_path or os.environ.get("CCLOG_PRICING_YAML") or str(_DEFAULT_YAML)
     overrides = _load_yaml_overrides(override_path)

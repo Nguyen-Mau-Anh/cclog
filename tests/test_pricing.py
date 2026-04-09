@@ -63,3 +63,24 @@ def test_get_cost_usd_with_yaml_override(tmp_path):
     f.write_text("claude-3-5-sonnet:\n  input: 0.0\n  output: 0.0\n")
     cost = get_cost_usd("claude-3-5-sonnet", input_tok=1_000_000, output_tok=1_000_000, yaml_path=str(f))
     assert cost == 0.0
+
+def test_yaml_override_missing_required_keys_is_ignored(tmp_path):
+    """YAML entry missing 'output' key is silently skipped."""
+    f = tmp_path / "pricing.yaml"
+    f.write_text("bad-model:\n  input: 1.0\n")  # missing 'output'
+    from cclog.pricing import _load_yaml_overrides
+    result = _load_yaml_overrides(str(f))
+    assert "bad-model" not in result
+
+def test_yaml_override_non_numeric_value_is_ignored(tmp_path):
+    """YAML entry with non-numeric price is silently skipped."""
+    f = tmp_path / "pricing.yaml"
+    f.write_text("bad-model:\n  input: 'free'\n  output: 0.0\n")
+    from cclog.pricing import _load_yaml_overrides
+    result = _load_yaml_overrides(str(f))
+    assert "bad-model" not in result
+
+def test_get_cost_usd_negative_tokens_clamped_to_zero():
+    """Negative token counts are clamped to 0, not producing negative cost."""
+    cost = get_cost_usd("claude-3-5-sonnet", input_tok=-100, output_tok=-50)
+    assert cost == 0.0
