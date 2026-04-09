@@ -228,8 +228,8 @@ def cmd_sessions(args) -> None:
         FROM sessions s
         LEFT JOIN events e ON e.session_id = s.id
         LEFT JOIN token_ledger tl ON tl.event_id = e.id
-        GROUP BY s.id ORDER BY last_active DESC NULLS LAST LIMIT 20
-        """
+        GROUP BY s.id ORDER BY last_active DESC NULLS LAST {limit_clause}
+        """.format(limit_clause="" if getattr(args, "all", False) else "LIMIT 20")
         rows = conn.execute(sql).fetchall()
     except Exception as e:
         _console.print(f"[red]Query error: {e}[/red]")
@@ -301,7 +301,6 @@ def cmd_query(args) -> None:
         rows = cur.fetchall()
     except sqlite3.Error as e:
         _console.print(f"[red]SQL error: {e}[/red]")
-        conn.close()
         sys.exit(1)
     finally:
         conn.close()
