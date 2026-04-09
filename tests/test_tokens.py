@@ -52,31 +52,40 @@ def test_api_tier_partial_usage_only_input():
     assert result.gross_output == 0
 
 def test_api_tier_partial_usage_only_output():
-    result = count_tokens(_payload(output_tokens=20), prev_gross_input=0)
-    assert result.gross_output >= 0  # must not crash
+    """Payload with only output_tokens (no input_tokens) falls through to heuristic/tiktoken tier."""
+    payload = _payload(output_tokens=20)
+    result = count_tokens(payload, prev_gross_input=0)
+    # Without input_tokens in usage, tier 1 is not triggered
+    assert result.counted_by in ("tiktoken", "heuristic")
 
 
 # --- Tier 2: tiktoken (skip if not installed) ---
 
-tiktoken = pytest.importorskip("tiktoken", reason="tiktoken not installed")
+@pytest.mark.skipif(
+    pytest.importorskip.__module__ and not __import__("importlib.util", fromlist=["find_spec"]).find_spec("tiktoken"),
+    reason="tiktoken not installed",
+)
+class TestTiktokenTier:
+    def test_tiktoken_tier_used_when_no_usage(self):
+        pytest.importorskip("tiktoken", reason="tiktoken not installed")
+        payload = _payload(
+            tool_input={"command": "ls -la"},
+            tool_response={"output": "total 8\n-rw-r--r-- 1 user user 123 Apr 9 file.txt\n"},
+        )
+        result = count_tokens(payload, prev_gross_input=0)
+        assert result.counted_by == "tiktoken"
 
-def test_tiktoken_tier_used_when_no_usage():
-    payload = _payload(
-        tool_input={"command": "ls -la"},
-        tool_response={"output": "total 8\n-rw-r--r-- 1 user user 123 Apr 9 file.txt\n"},
-    )
-    result = count_tokens(payload, prev_gross_input=0)
-    assert result.counted_by == "tiktoken"
+    def test_tiktoken_tier_gross_input_positive(self):
+        pytest.importorskip("tiktoken", reason="tiktoken not installed")
+        payload = _payload(tool_input={"command": "cat README.md"}, tool_response={"output": "# Hello\n"})
+        result = count_tokens(payload, prev_gross_input=0)
+        assert result.gross_input > 0
 
-def test_tiktoken_tier_gross_input_positive():
-    payload = _payload(tool_input={"command": "cat README.md"}, tool_response={"output": "# Hello\n"})
-    result = count_tokens(payload, prev_gross_input=0)
-    assert result.gross_input > 0
-
-def test_tiktoken_tier_net_delta():
-    payload = _payload(tool_input={"command": "echo hi"}, tool_response={"output": "hi\n"})
-    result = count_tokens(payload, prev_gross_input=5)
-    assert result.net_input == max(0, result.gross_input - 5)
+    def test_tiktoken_tier_net_delta(self):
+        pytest.importorskip("tiktoken", reason="tiktoken not installed")
+        payload = _payload(tool_input={"command": "echo hi"}, tool_response={"output": "hi\n"})
+        result = count_tokens(payload, prev_gross_input=5)
+        assert result.net_input == max(0, result.gross_input - 5)
 
 
 # --- Tier 3: heuristic ---
@@ -97,8 +106,8 @@ def test_heuristic_tier_formula(monkeypatch):
     result = count_tokens(payload, prev_gross_input=0)
     input_json = json.dumps({"command": input_text})
     output_json = json.dumps({"output": output_text})
-    expected_gross = (len(input_json) + len(output_json)) // 4
-    assert result.gross_input == expected_gross
+    assert result.gross_input == len(input_json) // 4
+    assert result.gross_output == len(output_json) // 4  # add this assertion
 
 def test_heuristic_tier_empty_payload(monkeypatch):
     import cclog.tokens as tok_mod

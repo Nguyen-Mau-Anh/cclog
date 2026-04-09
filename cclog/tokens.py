@@ -35,7 +35,10 @@ def _serialize(obj: Any) -> str:
         return ""
     if isinstance(obj, str):
         return obj
-    return json.dumps(obj, ensure_ascii=False)
+    try:
+        return json.dumps(obj, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return repr(obj)
 
 
 def _net(gross: int, prev: int) -> int:
@@ -56,13 +59,12 @@ def count_tokens(payload: Dict[str, Any], prev_gross_input: int) -> TokenResult:
             counted_by="api",
         )
 
-    input_text = _serialize(payload.get("tool_input"))
-    output_text = _serialize(payload.get("tool_response"))
-
     # Tier 2: tiktoken BPE
     if _TIKTOKEN_AVAILABLE and _ENCODER is not None:
-        gross_in = len(_ENCODER.encode(input_text))
-        gross_out = len(_ENCODER.encode(output_text))
+        input_json = _serialize(payload.get("tool_input"))
+        output_json = _serialize(payload.get("tool_response"))
+        gross_in = len(_ENCODER.encode(input_json))
+        gross_out = len(_ENCODER.encode(output_json))
         return TokenResult(
             gross_input=gross_in,
             gross_output=gross_out,
@@ -70,13 +72,14 @@ def count_tokens(payload: Dict[str, Any], prev_gross_input: int) -> TokenResult:
             counted_by="tiktoken",
         )
 
-    # Tier 3: character heuristic
+    # Tier 3: character heuristic — len // 4 per field
     input_json = _serialize(payload.get("tool_input"))
     output_json = _serialize(payload.get("tool_response"))
-    gross_in = (len(input_json) + len(output_json)) // 4
+    gross_in = len(input_json) // 4
+    gross_out = len(output_json) // 4
     return TokenResult(
         gross_input=gross_in,
-        gross_output=0,
+        gross_output=gross_out,
         net_input=_net(gross_in, prev_gross_input),
         counted_by="heuristic",
     )
