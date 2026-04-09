@@ -376,10 +376,10 @@ function escapeAttr(str) {
 
 fetchSessions();
 connectSSE();
-setInterval(updateAllTimestamps, 10_000);
+setInterval(updateAllTimestamps, 1_000);
 setInterval(async () => {
     await fetchSessions();
     if (selectedSessionId) {
         refreshDetailSilent(selectedSessionId);
     }
-}, 15_000);
+}, 1_000);
