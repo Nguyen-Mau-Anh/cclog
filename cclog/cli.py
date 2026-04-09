@@ -244,7 +244,7 @@ def cmd_sessions(args) -> None:
     if from_ms is not None:
         having_clauses.append("last_active >= ?")
         params.append(from_ms)
-    elif not show_all:
+    elif not show_all and to_ms is None:
         cutoff_ms = int((time.time() - 86400) * 1000)
         having_clauses.append("last_active >= ?")
         params.append(cutoff_ms)

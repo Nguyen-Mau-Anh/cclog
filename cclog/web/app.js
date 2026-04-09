@@ -496,6 +496,14 @@ function applyPreset(preset) {
         // filterFrom/filterTo set by the datetime inputs below
     }
 
+    // Clear custom inputs when switching away from custom
+    if (preset !== 'custom') {
+        const fi = document.getElementById('filter-from-input');
+        const ti = document.getElementById('filter-to-input');
+        if (fi) fi.value = '';
+        if (ti) ti.value = '';
+    }
+
     renderSessionList();
 }
 
