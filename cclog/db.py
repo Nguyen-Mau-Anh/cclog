@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE TABLE IF NOT EXISTS token_ledger (
-    event_id       INTEGER REFERENCES events(id),
+    event_id       INTEGER PRIMARY KEY REFERENCES events(id),
     gross_input    INTEGER DEFAULT 0,
     gross_output   INTEGER DEFAULT 0,
     net_input      INTEGER,
@@ -50,7 +50,7 @@ def get_db(path: str) -> sqlite3.Connection:
     db_path = Path(path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=0.5)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

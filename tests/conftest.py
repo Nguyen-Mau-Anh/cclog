@@ -10,6 +10,7 @@ def mem_conn():
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")  # add this line
     try:
         setup_schema(conn)
         yield conn

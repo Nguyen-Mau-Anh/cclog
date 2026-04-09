@@ -118,3 +118,13 @@ def test_get_db_creates_parent_dir(tmp_path):
     conn = get_db(str(db_path))
     assert db_path.exists()
     conn.close()
+
+
+def test_foreign_key_violation_raises(mem_conn):
+    """Inserting an event with non-existent session_id must raise IntegrityError."""
+    with pytest.raises(Exception):  # sqlite3.IntegrityError is a subclass of Exception
+        mem_conn.execute(
+            "INSERT INTO events (session_id, phase, tool_name, occurred_at) VALUES (?,?,?,?)",
+            ("nonexistent-session", "post", "Bash", 9999),
+        )
+        mem_conn.commit()
