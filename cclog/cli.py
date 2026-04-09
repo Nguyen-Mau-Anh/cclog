@@ -212,6 +212,20 @@ def cmd_today(args) -> None:
     _console.print(table)
 
 
+def _parse_datetime_arg(s: str) -> int:
+    """Parse a date or datetime string to ms epoch. Raises ArgumentTypeError on failure."""
+    import argparse as _ap
+    from datetime import datetime as _dt
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return int(_dt.strptime(s, fmt).timestamp() * 1000)
+        except ValueError:
+            continue
+    raise _ap.ArgumentTypeError(
+        f"Cannot parse date/time: {s!r}. Use YYYY-MM-DD or YYYY-MM-DD HH:MM"
+    )
+
+
 def cmd_sessions(args) -> None:
     db = _db_path()
     try:
@@ -221,27 +235,47 @@ def cmd_sessions(args) -> None:
         _console.print(f"[red]Error opening database: {e}[/red]")
         sys.exit(1)
 
-    try:
-        sql = """
-        SELECT s.id, s.name, s.cwd, s.started_at, MAX(e.occurred_at) AS last_active,
-               COUNT(e.id) AS tool_calls, COALESCE(SUM(tl.cost_usd), 0.0) AS cost
+    from_ms = getattr(args, 'from_dt', None)
+    to_ms   = getattr(args, 'to_dt', None)
+    show_all = getattr(args, 'all', False)
+
+    having_clauses = []
+    params: list = []
+    if from_ms is not None:
+        having_clauses.append("last_active >= ?")
+        params.append(from_ms)
+    elif not show_all:
+        cutoff_ms = int((time.time() - 86400) * 1000)
+        having_clauses.append("last_active >= ?")
+        params.append(cutoff_ms)
+    if to_ms is not None:
+        having_clauses.append("(s.started_at <= ? OR s.started_at IS NULL)")
+        params.append(to_ms)
+
+    having_sql = ("HAVING " + " AND ".join(having_clauses)) if having_clauses else ""
+    limit_sql = "LIMIT 20" if not show_all and not having_clauses else ""
+
+    sql = f"""
+        SELECT s.id, s.cwd, s.name, s.started_at,
+               MAX(e.occurred_at) AS last_active,
+               COUNT(e.id) AS tool_calls,
+               COALESCE(SUM(tl.cost_usd), 0.0) AS cost
         FROM sessions s
         LEFT JOIN events e ON e.session_id = s.id
         LEFT JOIN token_ledger tl ON tl.event_id = e.id
-        GROUP BY s.id ORDER BY last_active DESC NULLS LAST {limit_clause}
-        """.format(limit_clause="" if getattr(args, "all", False) else "LIMIT 20")
-        rows = conn.execute(sql).fetchall()
+        GROUP BY s.id
+        {having_sql}
+        ORDER BY last_active DESC NULLS LAST
+        {limit_sql}
+    """
+
+    try:
+        rows = conn.execute(sql, params).fetchall()
     except Exception as e:
         _console.print(f"[red]Query error: {e}[/red]")
         sys.exit(1)
     finally:
         conn.close()
-
-    now_ms = int(time.time() * 1000)
-    cutoff_ms = now_ms - 24 * 3600 * 1000  # 24 hours ago
-
-    if not getattr(args, "all", False):
-        rows = [r for r in rows if r["last_active"] is not None and r["last_active"] >= cutoff_ms]
 
     if not rows:
         _console.print("No sessions found.")
@@ -334,6 +368,14 @@ def main() -> None:
 
     p_sessions = sub.add_parser("sessions", help="List recent sessions")
     p_sessions.add_argument("--all", action="store_true", help="Show all sessions (not just last 24h)")
+    p_sessions.add_argument(
+        "--from", dest="from_dt", metavar="DATETIME", type=_parse_datetime_arg,
+        help='Show sessions active after this time (e.g. "2026-04-09" or "2026-04-09 14:00")'
+    )
+    p_sessions.add_argument(
+        "--to", dest="to_dt", metavar="DATETIME", type=_parse_datetime_arg,
+        help="Show sessions that started before this time"
+    )
 
     p_query = sub.add_parser("query", help="Run a raw SQL query")
     p_query.add_argument("sql", help="SQL query string")
