@@ -420,8 +420,9 @@ function applyPreset(preset) {
     const customRange = document.getElementById('custom-date-range');
 
     // Reset active state
-    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector(`[data-preset="${preset}"]`)?.classList.add('active');
+    document.querySelectorAll('.preset-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.preset === preset);
+    });
 
     if (preset === 'all') {
         filterFrom = null; filterTo = null;
