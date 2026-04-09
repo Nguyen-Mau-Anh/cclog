@@ -155,6 +155,7 @@ async function selectSession(id) {
 
 function renderDetail(session) {
     const detail = document.getElementById('detail-panel');
+    const rawEventsOpen = detail.querySelector('details')?.open ?? false;
 
     // ── Tool breakdown ──
     const toolMap = new Map();
@@ -275,6 +276,12 @@ function renderDetail(session) {
             </details>
         </div>
     `;
+
+    // Restore <details> open state (lost when innerHTML is replaced)
+    if (rawEventsOpen) {
+        const detailsEl = detail.querySelector('details');
+        if (detailsEl) detailsEl.open = true;
+    }
 
     // Wire up back button (mobile)
     const backBtn = document.getElementById('back-btn');
