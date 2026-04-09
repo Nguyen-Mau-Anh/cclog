@@ -317,6 +317,8 @@ function renderDetail(session) {
 // ── Silent detail refresh (no loading flash) ──────────────────────────────
 
 async function refreshDetailSilent(id) {
+    // Skip re-render while user is interacting with any dropdown in the detail panel
+    if (document.activeElement && document.activeElement.closest('#detail-panel')) return;
     // Re-fetch and re-render detail WITHOUT clearing the panel first
     try {
         const resp = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
