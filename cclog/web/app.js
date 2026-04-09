@@ -6,7 +6,9 @@ let sessions = [];
 let selectedSessionId = null;
 let searchQuery = '';
 let statusFilter = 'all'; // 'all' | 'active' | 'active_idle'
-let eventsTimeRange = 3_600_000; // ms; 0 = all time
+let eventsTimeRange = 3_600_000; // ms; 0 = all time; -1 = custom range
+let eventsCustomFrom = null; // ms epoch or null
+let eventsCustomTo = null;   // ms epoch or null
 
 // Date range filter for session list (ms epoch or null)
 let filterFrom = null;
@@ -204,8 +206,19 @@ function renderDetail(session) {
         `).join('');
 
     // ── Raw events (filtered by time range) ──
-    const cutoff = eventsTimeRange ? Date.now() - eventsTimeRange : 0;
-    const rawEvents = events.filter(ev => !eventsTimeRange || (ev.occurred_at || 0) >= cutoff).reverse();
+    let rawEvents;
+    if (eventsTimeRange === -1) {
+        // Custom range mode
+        rawEvents = events.filter(ev => {
+            const t = ev.occurred_at ?? 0;
+            if (eventsCustomFrom !== null && t < eventsCustomFrom) return false;
+            if (eventsCustomTo !== null && t > eventsCustomTo) return false;
+            return true;
+        }).reverse();
+    } else {
+        const cutoff = eventsTimeRange ? Date.now() - eventsTimeRange : 0;
+        rawEvents = events.filter(ev => !eventsTimeRange || (ev.occurred_at ?? 0) >= cutoff).reverse();
+    }
     const rawRows = rawEvents.map(ev => {
         const tokens = (ev.gross_input || 0) + (ev.gross_output || 0);
         return `
@@ -286,7 +299,13 @@ function renderDetail(session) {
                         <option value="21600000">Last 6h</option>
                         <option value="86400000">Last 24h</option>
                         <option value="0">All time</option>
+                        <option value="custom">Custom…</option>
                     </select>
+                    <span id="events-custom-inputs" style="display:none;align-items:center;gap:4px;margin-left:8px">
+                        <input type="datetime-local" id="events-from-input" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:11px">
+                        <span style="color:var(--text-dim);font-size:11px">→</span>
+                        <input type="datetime-local" id="events-to-input" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 4px;font-size:11px">
+                    </span>
                 </summary>
                 <div class="raw-events-table">
                     ${rawRows ? `
@@ -315,11 +334,40 @@ function renderDetail(session) {
 
     // Restore and wire up events range selector
     const rangeSelect = document.getElementById('events-range-select');
+    const eventsCustomInputs = document.getElementById('events-custom-inputs');
+    const eventsFromInput = document.getElementById('events-from-input');
+    const eventsToInput = document.getElementById('events-to-input');
+
     if (rangeSelect) {
-        rangeSelect.value = String(eventsTimeRange);
+        rangeSelect.value = eventsTimeRange === -1 ? 'custom' : String(eventsTimeRange);
+        if (eventsTimeRange === -1 && eventsCustomInputs) {
+            eventsCustomInputs.style.display = 'inline-flex';
+            if (eventsFromInput && eventsCustomFrom) eventsFromInput.value = new Date(eventsCustomFrom).toISOString().slice(0, 16);
+            if (eventsToInput && eventsCustomTo) eventsToInput.value = new Date(eventsCustomTo).toISOString().slice(0, 16);
+        }
+
         rangeSelect.addEventListener('change', (e) => {
-            e.stopPropagation(); // don't toggle <details>
-            eventsTimeRange = parseInt(e.target.value, 10);
+            e.stopPropagation();
+            if (e.target.value === 'custom') {
+                eventsTimeRange = -1;
+                if (eventsCustomInputs) eventsCustomInputs.style.display = 'inline-flex';
+            } else {
+                eventsTimeRange = parseInt(e.target.value, 10);
+                eventsCustomFrom = null; eventsCustomTo = null;
+                if (eventsCustomInputs) eventsCustomInputs.style.display = 'none';
+            }
+            if (currentDetailData) renderDetail(currentDetailData);
+        });
+
+        eventsFromInput?.addEventListener('input', (e) => {
+            e.stopPropagation();
+            eventsCustomFrom = e.target.value ? new Date(e.target.value).getTime() : null;
+            if (currentDetailData) renderDetail(currentDetailData);
+        });
+        eventsToInput?.addEventListener('input', (e) => {
+            e.stopPropagation();
+            eventsCustomTo = e.target.value ? new Date(e.target.value).getTime() + 59_999 : null;
+            if (currentDetailData) renderDetail(currentDetailData);
         });
     }
 
