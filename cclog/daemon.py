@@ -450,6 +450,10 @@ class CclogDaemon:
                 idle_threshold = _idle_minutes() * 60 * 1000
                 closed_threshold = _session_timeout_minutes() * 60 * 1000
 
+                found = False
+                row = None
+                event_rows = []
+
                 with daemon._db_lock:
                     conn = get_db(daemon.db_path)
                     try:
@@ -472,34 +476,34 @@ class CclogDaemon:
                             (session_id,),
                         ).fetchall()
 
-                        if not sess_rows:
-                            conn.close()
-                            self.send_error(404, "Session not found")
-                            return
-
-                        row = sess_rows[0]
-
-                        event_rows = conn.execute(
-                            """
-                            SELECT
-                                e.id,
-                                e.phase,
-                                e.tool_name,
-                                e.occurred_at,
-                                tl.gross_input,
-                                tl.gross_output,
-                                tl.net_input,
-                                tl.cost_usd,
-                                tl.counted_by
-                            FROM events e
-                            LEFT JOIN token_ledger tl ON tl.event_id = e.id
-                            WHERE e.session_id = ?
-                            ORDER BY e.occurred_at ASC
-                            """,
-                            (session_id,),
-                        ).fetchall()
+                        if sess_rows:
+                            found = True
+                            row = sess_rows[0]
+                            event_rows = conn.execute(
+                                """
+                                SELECT
+                                    e.id,
+                                    e.phase,
+                                    e.tool_name,
+                                    e.occurred_at,
+                                    tl.gross_input,
+                                    tl.gross_output,
+                                    tl.net_input,
+                                    tl.cost_usd,
+                                    tl.counted_by
+                                FROM events e
+                                LEFT JOIN token_ledger tl ON tl.event_id = e.id
+                                WHERE e.session_id = ?
+                                ORDER BY e.occurred_at ASC
+                                """,
+                                (session_id,),
+                            ).fetchall()
                     finally:
                         conn.close()
+
+                if not found:
+                    self.send_error(404, "Session not found")
+                    return
 
                 last_active = row["last_active"]
                 if last_active is None:
