@@ -7,7 +7,7 @@ import sqlite3
 import threading
 import pytest
 
-from cclog.db import get_db, setup_schema
+from cclog.db import get_db
 from cclog.hook import main
 
 
@@ -134,7 +134,7 @@ def test_hook_sends_to_daemon_when_socket_exists(tmp_path, monkeypatch):
 
     t = threading.Thread(target=server, daemon=True)
     t.start()
-    ready.wait(timeout=2)
+    assert ready.wait(timeout=2), "Server thread did not become ready"
 
     db_path = str(tmp_path / "audit.db")
     payload = {
@@ -148,7 +148,7 @@ def test_hook_sends_to_daemon_when_socket_exists(tmp_path, monkeypatch):
     monkeypatch.setenv("CCLOG_DB", db_path)
     main("pre")
 
-    done.wait(timeout=2)
+    assert done.wait(timeout=2), "Server thread did not complete — hook may not have sent"
 
     # Verify the message was sent to the socket
     assert len(received) == 1

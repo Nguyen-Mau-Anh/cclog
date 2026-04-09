@@ -114,15 +114,19 @@ def main(phase: str) -> None:
 
         # Try Unix socket first
         sock_path = _sock_path()
+        json_bytes = json.dumps(payload).encode()
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
                 sock.settimeout(0.5)
-                sock.connect(sock_path)
-                json_bytes = json.dumps(payload).encode()
-                sock.sendall(json_bytes + b"\n")
-            return
-        except (FileNotFoundError, ConnectionRefusedError, OSError):
-            pass
+                try:
+                    sock.connect(sock_path)
+                except (FileNotFoundError, ConnectionRefusedError, OSError):
+                    pass  # daemon not running → fall through to direct write
+                else:
+                    sock.sendall(json_bytes + b"\n")
+                    return
+        except Exception as exc:
+            _log_error(f"hook: socket error: {exc}")
 
         # Fallback: direct SQLite write
         _write_direct(payload, phase)
