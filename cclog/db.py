@@ -39,10 +39,20 @@ CREATE INDEX IF NOT EXISTS idx_events_time    ON events(occurred_at);
 """
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Apply incremental migrations."""
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN name TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
+
 def setup_schema(conn: sqlite3.Connection) -> None:
     """Create all tables and indexes idempotently (IF NOT EXISTS)."""
     conn.executescript(_DDL)
     conn.commit()
+    _migrate(conn)
 
 
 def get_db(path: str) -> sqlite3.Connection:

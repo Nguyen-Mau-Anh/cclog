@@ -46,6 +46,28 @@ function cwdDisplay(cwd) {
     return cwd || 'unknown';
 }
 
+function sessionLabel(s) {
+    const base = (s.cwd || '').split('/').filter(Boolean).pop() || s.id.slice(0, 8);
+    return s.name || base;
+}
+
+function sessionSublabel(s) {
+    return s.name ? s.cwd : null;  // only show full path if there's a custom name
+}
+
+function isMobile() {
+    return window.matchMedia('(max-width: 699px)').matches;
+}
+
+function updateAllTimestamps() {
+    document.querySelectorAll('[data-timestamp]').forEach(el => {
+        const ms = parseInt(el.dataset.timestamp, 10);
+        if (!isNaN(ms)) {
+            el.textContent = relativeTime(ms);
+        }
+    });
+}
+
 // ── Session list rendering ────────────────────────────────────────────────
 
 function filteredSessions() {
@@ -80,15 +102,20 @@ function renderSessionList() {
     list.innerHTML = visible.map(s => {
         const isSelected = s.id === selectedSessionId;
         const cwd = cwdDisplay(s.cwd);
-        const shortCwd = cwd.length > 32 ? '…' + cwd.slice(-30) : cwd;
+        const label = sessionLabel(s);
+        const sublabel = sessionSublabel(s);
         const cost = formatCost(s.estimated_cost);
         const calls = s.tool_calls || 0;
+        const sublabelHtml = sublabel
+            ? `<div class="session-meta" style="font-size:10px;color:var(--text-dim)">${escapeHtml(sublabel)}</div>`
+            : '';
         return `
         <div class="session-item ${isSelected ? 'selected' : ''}" data-id="${escapeAttr(s.id)}">
             <span class="session-dot ${s.status}">${statusDot(s.status)}</span>
             <div class="session-info">
-                <div class="session-cwd" title="${escapeAttr(cwd)}">${escapeHtml(shortCwd)}</div>
-                <div class="session-meta">${escapeHtml(cost)} · ${calls} call${calls !== 1 ? 's' : ''}</div>
+                <div class="session-cwd" title="${escapeAttr(cwd)}">${escapeHtml(label)}</div>
+                ${sublabelHtml}
+                <div class="session-meta">${escapeHtml(cost)} · ${calls} call${calls !== 1 ? 's' : ''} · <span class="rel-time" data-timestamp="${s.last_active || ''}">${relativeTime(s.last_active)}</span></div>
             </div>
         </div>`;
     }).join('');
@@ -107,6 +134,11 @@ function renderSessionList() {
 async function selectSession(id) {
     selectedSessionId = id;
     renderSessionList(); // update selection highlight
+
+    // Mobile: switch to detail view
+    if (isMobile()) {
+        document.querySelector('.content').classList.add('mobile-detail-active');
+    }
 
     const detail = document.getElementById('detail-panel');
     detail.innerHTML = '<div class="detail-placeholder"><div>Loading…</div></div>';
@@ -165,14 +197,21 @@ function renderDetail(session) {
     }).join('');
 
     const statusBadge = `<span class="status-badge ${session.status || 'closed'}">${session.status || 'closed'}</span>`;
+    const titleLabel = sessionLabel(session);
+    const cwdPath = session.cwd || '';
+    const cwdSubline = cwdPath
+        ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;font-family:monospace">${escapeHtml(cwdPath)}</div>`
+        : '';
 
     detail.innerHTML = `
         <div class="detail-header">
-            <div class="detail-title">${escapeHtml(cwdDisplay(session.cwd))}</div>
+            <button id="back-btn" type="button">&#8592; Back</button>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+                <div class="detail-title" style="margin-bottom:0">${escapeHtml(titleLabel)}</div>
+                ${statusBadge}
+            </div>
+            ${cwdSubline}
             <div class="detail-meta-grid">
-                <span class="meta-label">Status</span>
-                <span>${statusBadge}</span>
-
                 <span class="meta-label">Session ID</span>
                 <span class="meta-value monospace">${escapeHtml(session.id || '—')}</span>
 
@@ -180,7 +219,7 @@ function renderDetail(session) {
                 <span class="meta-value">${escapeHtml(formatTime(session.started_at))}</span>
 
                 <span class="meta-label">Last active</span>
-                <span class="meta-value">${escapeHtml(relativeTime(session.last_active))}</span>
+                <span class="meta-value"><span class="rel-time" data-timestamp="${session.last_active || ''}">${relativeTime(session.last_active)}</span></span>
             </div>
         </div>
 
@@ -236,6 +275,16 @@ function renderDetail(session) {
             </details>
         </div>
     `;
+
+    // Wire up back button (mobile)
+    const backBtn = document.getElementById('back-btn');
+    if (backBtn) {
+        backBtn.addEventListener('click', () => {
+            document.querySelector('.content').classList.remove('mobile-detail-active');
+            selectedSessionId = null;
+            renderSessionList();
+        });
+    }
 }
 
 // ── API fetching ──────────────────────────────────────────────────────────
@@ -313,3 +362,4 @@ function escapeAttr(str) {
 
 fetchSessions();
 connectSSE();
+setInterval(updateAllTimestamps, 30_000);

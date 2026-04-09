@@ -63,10 +63,16 @@ def _write_direct(payload: dict, phase: str) -> None:
     conn = get_db(_db_path())
 
     # Upsert session
+    session_name = payload.get("session_name") or os.environ.get("CLAUDE_SESSION_NAME")
     conn.execute(
         "INSERT OR IGNORE INTO sessions (id, started_at, model, cwd) VALUES (?,?,?,?)",
         (session_id, now_ms, payload.get("model"), payload.get("cwd")),
     )
+    if session_name:
+        conn.execute(
+            "UPDATE sessions SET name = ? WHERE id = ? AND name IS NULL",
+            (session_name, session_id),
+        )
 
     # Insert event
     input_json = json.dumps(payload.get("tool_input")) if payload.get("tool_input") else None

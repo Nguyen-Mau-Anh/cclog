@@ -35,7 +35,6 @@
       font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
       font-size: 14px;
       line-height: 1.5;
-      min-width: 700px;
     }
 
     /* ── Layout ─────────────────────────────────────────── */
@@ -446,6 +445,73 @@
     .monospace {
       font-family: 'Cascadia Code', 'Fira Code', monospace;
       font-size: 12px;
+    }
+
+    /* ── Back button (mobile only) ───────────────────────── */
+
+    #back-btn {
+      display: none;
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 13px;
+      cursor: pointer;
+      margin-bottom: 12px;
+    }
+
+    #back-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text);
+    }
+
+    /* ── Mobile responsive ───────────────────────────────── */
+
+    @media (max-width: 699px) {
+      .content {
+        flex-direction: column;
+      }
+
+      .sessions-panel {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .detail-panel {
+        width: 100%;
+        padding: 14px 16px;
+      }
+
+      /* When a session is selected on mobile, hide list, show detail */
+      .content.mobile-detail-active .sessions-panel {
+        display: none;
+      }
+
+      .content.mobile-detail-active .detail-panel {
+        display: block;
+      }
+
+      .session-item {
+        min-height: 44px;
+        align-items: center;
+      }
+
+      header {
+        flex-wrap: wrap;
+        gap: 8px;
+        height: auto;
+        padding: 8px 16px;
+      }
+
+      .header-controls {
+        flex-wrap: wrap;
+      }
+
+      #back-btn {
+        display: inline-block;
+      }
     }
   </style>
 </head>

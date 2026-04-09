@@ -212,6 +212,8 @@ class CclogDaemon:
             phase = payload.get("_phase") or payload.get("phase") or "post"
             received_at = int(time.time() * 1000)
 
+            session_name = payload.get("session_name") or os.environ.get("CLAUDE_SESSION_NAME")
+
             event = HookEvent(
                 session_id=payload.get("session_id") or str(uuid.uuid4()),
                 phase=phase,
@@ -223,7 +225,7 @@ class CclogDaemon:
                 cwd=payload.get("cwd") or "",
                 received_at=received_at,
             )
-            self._handle_event(event)
+            self._handle_event(event, session_name=session_name)
         except Exception:
             pass
         finally:
@@ -236,8 +238,8 @@ class CclogDaemon:
     # Event handling
     # ------------------------------------------------------------------
 
-    def _handle_event(self, event: HookEvent) -> None:
-        self._write_to_db(event)
+    def _handle_event(self, event: HookEvent, session_name: Optional[str] = None) -> None:
+        self._write_to_db(event, session_name=session_name)
         self._broadcast_sse(event)
 
     def _get_prev_gross_input(self, conn: Any, session_id: str) -> int:
@@ -249,7 +251,7 @@ class CclogDaemon:
         ).fetchone()
         return row[0] if row else 0
 
-    def _write_to_db(self, event: HookEvent) -> None:
+    def _write_to_db(self, event: HookEvent, session_name: Optional[str] = None) -> None:
         from cclog.db import get_db
         from cclog.tokens import count_tokens
         from cclog.pricing import get_cost_usd
@@ -262,6 +264,11 @@ class CclogDaemon:
                     "INSERT OR IGNORE INTO sessions (id, started_at, model, cwd) VALUES (?,?,?,?)",
                     (event.session_id, event.received_at, event.model, event.cwd),
                 )
+                if session_name:
+                    conn.execute(
+                        "UPDATE sessions SET name = ? WHERE id = ? AND name IS NULL",
+                        (session_name, event.session_id),
+                    )
 
                 # Insert event
                 input_json = json.dumps(event.tool_input) if event.tool_input else None
@@ -414,6 +421,7 @@ class CclogDaemon:
                             """
                             SELECT
                                 s.id,
+                                s.name,
                                 s.cwd,
                                 s.started_at,
                                 MAX(e.occurred_at) AS last_active,
@@ -446,6 +454,7 @@ class CclogDaemon:
 
                     result.append({
                         "id": row["id"],
+                        "name": row["name"],
                         "cwd": row["cwd"],
                         "started_at": row["started_at"],
                         "last_active": last_active,
@@ -475,6 +484,7 @@ class CclogDaemon:
                             """
                             SELECT
                                 s.id,
+                                s.name,
                                 s.cwd,
                                 s.started_at,
                                 MAX(e.occurred_at) AS last_active,
@@ -547,6 +557,7 @@ class CclogDaemon:
 
                 result = {
                     "id": row["id"],
+                    "name": row["name"],
                     "cwd": row["cwd"],
                     "started_at": row["started_at"],
                     "last_active": last_active,

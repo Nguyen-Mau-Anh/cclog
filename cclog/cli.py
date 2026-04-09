@@ -223,7 +223,7 @@ def cmd_sessions(args) -> None:
 
     try:
         sql = """
-        SELECT s.id, s.cwd, s.started_at, MAX(e.occurred_at) AS last_active,
+        SELECT s.id, s.name, s.cwd, s.started_at, MAX(e.occurred_at) AS last_active,
                COUNT(e.id) AS tool_calls, COALESCE(SUM(tl.cost_usd), 0.0) AS cost
         FROM sessions s
         LEFT JOIN events e ON e.session_id = s.id
@@ -251,6 +251,7 @@ def cmd_sessions(args) -> None:
     table.add_column("Status", justify="center")
     table.add_column("Started")
     table.add_column("Last Active")
+    table.add_column("Name", style="cyan")
     table.add_column("Folder", style="cyan")
     table.add_column("Calls", justify="right")
     table.add_column("Cost", justify="right")
@@ -269,10 +270,11 @@ def cmd_sessions(args) -> None:
         started_str = _fmt_time(started_at)
         last_str = _fmt_time(last_active)
         cwd = row["cwd"] or ""
+        name_display = row["name"] or (cwd).rsplit("/", 1)[-1] or row["id"][:8]
         calls = str(row["tool_calls"])
         cost = f"${row['cost']:.4f}"
 
-        table.add_row(status, started_str, last_str, cwd, calls, cost)
+        table.add_row(status, started_str, last_str, name_display, cwd, calls, cost)
 
     _console.print(table)
 
