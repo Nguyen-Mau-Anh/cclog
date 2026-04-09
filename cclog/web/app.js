@@ -8,6 +8,13 @@ let searchQuery = '';
 let statusFilter = 'all'; // 'all' | 'active' | 'active_idle'
 let eventsTimeRange = 3_600_000; // ms; 0 = all time
 
+// Date range filter for session list (ms epoch or null)
+let filterFrom = null;
+let filterTo = null;
+
+// Cache last fetched session detail (for range re-renders without network call)
+let currentDetailData = null;
+
 // ── Helper functions ──────────────────────────────────────────────────────
 
 function formatCost(usd) {
@@ -76,6 +83,16 @@ function filteredSessions() {
         // Status filter
         if (statusFilter === 'active' && s.status !== 'active') return false;
         if (statusFilter === 'active_idle' && s.status === 'closed') return false;
+
+        // Date range filter (based on session last_active; fall back to started_at)
+        if (filterFrom !== null) {
+            const active = s.last_active || s.started_at;
+            if (active === null || active < filterFrom) return false;
+        }
+        if (filterTo !== null) {
+            const start = s.started_at || s.last_active;
+            if (start === null || start > filterTo) return false;
+        }
 
         // Search filter
         if (searchQuery) {
@@ -156,6 +173,7 @@ async function selectSession(id) {
 
 function renderDetail(session) {
     const detail = document.getElementById('detail-panel');
+    currentDetailData = session;
     const rawEventsOpen = detail.querySelector('details')?.open ?? false;
 
     // ── Tool breakdown ──
