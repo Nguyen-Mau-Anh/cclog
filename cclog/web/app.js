@@ -6,6 +6,7 @@ let sessions = [];
 let selectedSessionId = null;
 let searchQuery = '';
 let statusFilter = 'all'; // 'all' | 'active' | 'active_idle'
+let eventsTimeRange = 3_600_000; // ms; 0 = all time
 
 // ── Helper functions ──────────────────────────────────────────────────────
 
@@ -182,8 +183,9 @@ function renderDetail(session) {
             </tr>
         `).join('');
 
-    // ── Raw events (last 20) ──
-    const rawEvents = events.slice(-20).reverse();
+    // ── Raw events (filtered by time range) ──
+    const cutoff = eventsTimeRange ? Date.now() - eventsTimeRange : 0;
+    const rawEvents = events.filter(ev => !eventsTimeRange || (ev.occurred_at || 0) >= cutoff).reverse();
     const rawRows = rawEvents.map(ev => {
         const tokens = (ev.gross_input || 0) + (ev.gross_output || 0);
         return `
@@ -257,7 +259,15 @@ function renderDetail(session) {
 
         <div class="raw-events-section">
             <details>
-                <summary>Raw events (last ${rawEvents.length})</summary>
+                <summary>
+                    Raw events (${rawEvents.length})
+                    <select id="events-range-select" style="margin-left:8px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;cursor:pointer">
+                        <option value="3600000">Last 1h</option>
+                        <option value="21600000">Last 6h</option>
+                        <option value="86400000">Last 24h</option>
+                        <option value="0">All time</option>
+                    </select>
+                </summary>
                 <div class="raw-events-table">
                     ${rawRows ? `
                     <table>
@@ -281,6 +291,16 @@ function renderDetail(session) {
     if (rawEventsOpen) {
         const detailsEl = detail.querySelector('details');
         if (detailsEl) detailsEl.open = true;
+    }
+
+    // Restore and wire up events range selector
+    const rangeSelect = document.getElementById('events-range-select');
+    if (rangeSelect) {
+        rangeSelect.value = String(eventsTimeRange);
+        rangeSelect.addEventListener('change', (e) => {
+            e.stopPropagation(); // don't toggle <details>
+            eventsTimeRange = parseInt(e.target.value, 10);
+        });
     }
 
     // Wire up back button (mobile)
