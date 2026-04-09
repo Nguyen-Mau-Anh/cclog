@@ -55,6 +55,7 @@ es.onmessage = e => console.log('SSE:', e.data);
 
 _PACKAGE_DIR = Path(__file__).parent
 _INDEX_HTML_PATH = _PACKAGE_DIR / "web" / "index.html"
+_APP_JS_PATH = _PACKAGE_DIR / "web" / "app.js"
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +84,7 @@ class CclogDaemon:
         self,
         db_path: str,
         sock_path: str,
-        host: str = "127.0.0.1",
+        host: str = "0.0.0.0",
         port: int = 7331,
     ) -> None:
         self.db_path = db_path
@@ -361,6 +362,8 @@ class CclogDaemon:
 
                 if path == "/":
                     self._serve_index()
+                elif path == "/app.js":
+                    self._serve_app_js()
                 elif path == "/api/sessions":
                     self._serve_sessions()
                 elif path.startswith("/api/sessions/"):
@@ -382,6 +385,17 @@ class CclogDaemon:
                     content_type = "text/html"
                 self.send_response(200)
                 self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+
+            def _serve_app_js(self) -> None:
+                if not _APP_JS_PATH.exists():
+                    self.send_error(404, "Not Found")
+                    return
+                content = _APP_JS_PATH.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/javascript")
                 self.send_header("Content-Length", str(len(content)))
                 self.end_headers()
                 self.wfile.write(content)
@@ -629,16 +643,19 @@ def run_daemon(
     db_path: str | None = None,
     sock_path: str | None = None,
     port: int | None = None,
+    host: str | None = None,
 ) -> None:
     """Start the daemon. Called by `cclog start`."""
+    host = host or os.environ.get("CCLOG_HOST", "0.0.0.0")
+    port = port or int(os.environ.get("CCLOG_PORT", "7331"))
     resolved_db = db_path or _default_db_path()
     resolved_sock = sock_path or _default_sock_path()
-    resolved_port = port or 7331
 
     d = CclogDaemon(
         db_path=resolved_db,
         sock_path=resolved_sock,
-        port=resolved_port,
+        host=host,
+        port=port,
     )
     d.start()
 
