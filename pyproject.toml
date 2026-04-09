@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cclog"
+version = "0.1.0"
+description = "Claude Code Token Audit Logger"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = ["rich>=13"]
+
+[project.optional-dependencies]
+tiktoken = ["tiktoken>=0.6"]
+ui = ["textual>=0.60"]
+dev = ["pytest>=8", "pytest-cov"]
+
+[project.scripts]
+cclog = "cclog.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cclog*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
