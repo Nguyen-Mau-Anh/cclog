@@ -466,6 +466,55 @@
       color: var(--text);
     }
 
+    /* ── Date filter row ────────────────────────────────── */
+
+    .filter-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 16px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+        flex-wrap: wrap;
+    }
+    .filter-label {
+        font-size: 12px;
+        color: var(--text-dim);
+        white-space: nowrap;
+    }
+    .preset-btn {
+        background: var(--surface2);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 3px 10px;
+        font-size: 12px;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+    .preset-btn:hover { background: var(--surface3, #2a2a4a); }
+    .preset-btn.active {
+        background: var(--accent, #6366f1);
+        color: #fff;
+        border-color: var(--accent, #6366f1);
+    }
+    #custom-date-range {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+    #custom-date-range.visible { display: flex; }
+    #custom-date-range input[type="datetime-local"] {
+        background: var(--surface2);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 3px 6px;
+        font-size: 12px;
+        cursor: pointer;
+    }
+
     /* ── Mobile responsive ───────────────────────────────── */
 
     @media (max-width: 699px) {
@@ -536,6 +585,21 @@
         </select>
       </div>
     </header>
+
+    <div class="filter-row">
+        <span class="filter-label">Period:</span>
+        <button class="preset-btn active" data-preset="all">All</button>
+        <button class="preset-btn" data-preset="today">Today</button>
+        <button class="preset-btn" data-preset="yesterday">Yesterday</button>
+        <button class="preset-btn" data-preset="7days">7 days</button>
+        <button class="preset-btn" data-preset="custom">Custom…</button>
+        <div id="custom-date-range">
+            <span class="filter-label">From</span>
+            <input type="datetime-local" id="filter-from-input">
+            <span class="filter-label">to</span>
+            <input type="datetime-local" id="filter-to-input">
+        </div>
+    </div>
 
     <div id="disconnected-banner">
       Disconnected — reconnecting…

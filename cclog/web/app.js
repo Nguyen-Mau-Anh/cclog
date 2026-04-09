@@ -406,6 +406,62 @@ document.getElementById('status-filter').addEventListener('change', (e) => {
     renderSessionList();
 });
 
+// ── Date preset buttons ───────────────────────────────────────────────────
+
+function startOfDay(d) {
+    const r = new Date(d); r.setHours(0,0,0,0); return r.getTime();
+}
+function endOfDay(d) {
+    const r = new Date(d); r.setHours(23,59,59,999); return r.getTime();
+}
+
+function applyPreset(preset) {
+    const now = new Date();
+    const customRange = document.getElementById('custom-date-range');
+
+    // Reset active state
+    document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`[data-preset="${preset}"]`)?.classList.add('active');
+
+    if (preset === 'all') {
+        filterFrom = null; filterTo = null;
+        customRange?.classList.remove('visible');
+    } else if (preset === 'today') {
+        filterFrom = startOfDay(now); filterTo = endOfDay(now);
+        customRange?.classList.remove('visible');
+    } else if (preset === 'yesterday') {
+        const y = new Date(now); y.setDate(y.getDate() - 1);
+        filterFrom = startOfDay(y); filterTo = endOfDay(y);
+        customRange?.classList.remove('visible');
+    } else if (preset === '7days') {
+        const w = new Date(now); w.setDate(w.getDate() - 6);
+        filterFrom = startOfDay(w); filterTo = endOfDay(now);
+        customRange?.classList.remove('visible');
+    } else if (preset === 'custom') {
+        customRange?.classList.add('visible');
+        // filterFrom/filterTo set by the datetime inputs below
+    }
+
+    renderSessionList();
+}
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+});
+
+const fromInput = document.getElementById('filter-from-input');
+const toInput = document.getElementById('filter-to-input');
+
+fromInput?.addEventListener('input', () => {
+    filterFrom = fromInput.value ? new Date(fromInput.value).getTime() : null;
+    renderSessionList();
+});
+toInput?.addEventListener('input', () => {
+    // end of the selected minute
+    filterTo = toInput.value ? new Date(toInput.value).getTime() + 59_999 : null;
+    renderSessionList();
+});
+
 // ── Escape helpers ────────────────────────────────────────────────────────
 
 function escapeHtml(str) {
