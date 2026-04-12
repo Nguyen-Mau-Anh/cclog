@@ -4,6 +4,7 @@ cclog.hook — Claude Code hook entry point.
 Invoked by Claude Code's PreToolUse / PostToolUse hooks:
     python -m cclog.hook pre
     python -m cclog.hook post
+    python -m cclog.hook stop
 
 Reads JSON payload from stdin. Tries to send to daemon via Unix socket;
 falls back to direct SQLite write if daemon not available. Always exits 0.
@@ -102,6 +103,106 @@ def _write_direct(payload: dict, phase: str) -> None:
     conn.close()
 
 
+def _handle_stop(payload: dict) -> None:
+    """Process Stop hook: read JSONL transcript and update session token totals.
+
+    The Stop hook fires after every AI turn. Its payload contains transcript_path
+    pointing to the JSONL file with 100% accurate token data for all API calls.
+    """
+    from cclog.jsonl import find_transcript, read_session_tokens
+    from cclog.pricing import get_session_cost_usd
+
+    session_id = payload.get("session_id") or payload.get("sessionId")
+    if not session_id:
+        _log_error("hook/stop: no session_id in payload")
+        return
+
+    # Get transcript path from payload, or search for it
+    transcript_path = payload.get("transcript_path")
+    if not transcript_path:
+        transcript_path = find_transcript(session_id)
+    if not transcript_path:
+        _log_error(f"hook/stop: no transcript found for session {session_id}")
+        return
+
+    tokens = read_session_tokens(transcript_path)
+    cost = get_session_cost_usd(
+        tokens.model,
+        tokens.input_tokens,
+        tokens.output_tokens,
+        tokens.cache_creation_tokens,
+        tokens.cache_read_tokens,
+    ) or 0.0
+
+    update = {
+        "type": "jsonl_token_update",
+        "session_id": session_id,
+        "jsonl_input_tokens": tokens.input_tokens,
+        "jsonl_output_tokens": tokens.output_tokens,
+        "jsonl_cache_creation_tokens": tokens.cache_creation_tokens,
+        "jsonl_cache_read_tokens": tokens.cache_read_tokens,
+        "jsonl_cost_usd": cost,
+        "jsonl_model": tokens.model,
+    }
+
+    # Try daemon socket first
+    sock_path = _sock_path()
+    json_bytes = json.dumps(update).encode()
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            try:
+                sock.connect(sock_path)
+            except (FileNotFoundError, ConnectionRefusedError, OSError):
+                pass  # daemon not running → fall through to direct write
+            else:
+                sock.sendall(json_bytes + b"\n")
+                return
+    except Exception as exc:
+        _log_error(f"hook/stop: socket error: {exc}")
+
+    # Direct write fallback
+    _update_jsonl_tokens_direct(update)
+
+
+def _update_jsonl_tokens_direct(update: dict) -> None:
+    """Write JSONL token totals directly to SQLite (fallback when daemon not running)."""
+    from cclog.db import get_db
+
+    session_id = update["session_id"]
+    conn = get_db(_db_path())
+    try:
+        # Ensure session row exists before updating (Stop may arrive before any tool hooks)
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (id, started_at, model, cwd) VALUES (?,?,?,?)",
+            (session_id, int(time.time() * 1000), update.get("jsonl_model"), ""),
+        )
+        conn.execute(
+            """
+            UPDATE sessions SET
+                jsonl_input_tokens = ?,
+                jsonl_output_tokens = ?,
+                jsonl_cache_creation_tokens = ?,
+                jsonl_cache_read_tokens = ?,
+                jsonl_cost_usd = ?,
+                jsonl_model = ?
+            WHERE id = ?
+            """,
+            (
+                update["jsonl_input_tokens"],
+                update["jsonl_output_tokens"],
+                update["jsonl_cache_creation_tokens"],
+                update["jsonl_cache_read_tokens"],
+                update["jsonl_cost_usd"],
+                update["jsonl_model"],
+                session_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def main(phase: str) -> None:
     try:
         raw = sys.stdin.read()
@@ -113,6 +214,11 @@ def main(phase: str) -> None:
 
         if not isinstance(payload, dict):
             _log_error(f"hook/{phase}: payload is not a dict")
+            return
+
+        # Route Stop hook to its own handler
+        if phase == "stop":
+            _handle_stop(payload)
             return
 
         # Enrich payload with phase

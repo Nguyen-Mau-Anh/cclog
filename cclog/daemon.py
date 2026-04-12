@@ -209,6 +209,11 @@ class CclogDaemon:
             except json.JSONDecodeError:
                 return
 
+            # Route JSONL token updates to their own handler
+            if payload.get("type") == "jsonl_token_update":
+                self._update_jsonl_tokens(payload)
+                return
+
             phase = payload.get("_phase") or payload.get("phase") or "post"
             received_at = int(time.time() * 1000)
 
@@ -319,6 +324,50 @@ class CclogDaemon:
             finally:
                 conn.close()
 
+    def _update_jsonl_tokens(self, data: dict) -> None:
+        """Update session with JSONL-sourced accurate token totals."""
+        from cclog.db import get_db
+
+        session_id = data.get("session_id")
+        if not session_id:
+            return
+
+        with self._db_lock:
+            conn = get_db(self.db_path)
+            try:
+                # Ensure session exists (Stop hook may arrive before tool hooks)
+                conn.execute(
+                    "INSERT OR IGNORE INTO sessions (id, started_at, model, cwd) VALUES (?,?,?,?)",
+                    (session_id, int(time.time() * 1000), data.get("jsonl_model"), ""),
+                )
+                conn.execute(
+                    """
+                    UPDATE sessions SET
+                        jsonl_input_tokens = ?,
+                        jsonl_output_tokens = ?,
+                        jsonl_cache_creation_tokens = ?,
+                        jsonl_cache_read_tokens = ?,
+                        jsonl_cost_usd = ?,
+                        jsonl_model = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        data.get("jsonl_input_tokens", 0),
+                        data.get("jsonl_output_tokens", 0),
+                        data.get("jsonl_cache_creation_tokens", 0),
+                        data.get("jsonl_cache_read_tokens", 0),
+                        data.get("jsonl_cost_usd", 0.0),
+                        data.get("jsonl_model"),
+                        session_id,
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        # Broadcast SSE so dashboard refreshes
+        self._broadcast_sse_dict({"type": "session_update", "session_id": session_id})
+
     # ------------------------------------------------------------------
     # SSE broadcasting
     # ------------------------------------------------------------------
@@ -331,6 +380,20 @@ class CclogDaemon:
         })
         data = f"data: {msg}\n\n".encode()
 
+        with self._sse_lock:
+            dead: List[Any] = []
+            for wfile in self._sse_clients:
+                try:
+                    wfile.write(data)
+                    wfile.flush()
+                except Exception:
+                    dead.append(wfile)
+            for wfile in dead:
+                self._sse_clients.remove(wfile)
+
+    def _broadcast_sse_dict(self, msg: dict) -> None:
+        """Broadcast an arbitrary dict as an SSE event."""
+        data = f"data: {json.dumps(msg)}\n\n".encode()
         with self._sse_lock:
             dead: List[Any] = []
             for wfile in self._sse_clients:
