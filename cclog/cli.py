@@ -303,70 +303,71 @@ def cmd_backfill(args) -> None:
         rows = conn.execute("SELECT id FROM sessions ORDER BY started_at").fetchall()
     except Exception as e:
         _console.print(f"[red]Query error: {e}[/red]")
-        conn.close()
         sys.exit(1)
 
     filled = 0
     skipped = 0
 
-    for row in rows:
-        session_id = row["id"]
-        short = session_id[:8]
+    try:
+        for row in rows:
+            session_id = row["id"]
+            short = session_id[:8]
 
-        transcript_path = find_transcript(session_id)
-        if transcript_path is None:
-            _console.print(f"  skip {short}: no transcript")
-            skipped += 1
-            continue
+            transcript_path = find_transcript(session_id)
+            if transcript_path is None:
+                _console.print(f"  skip {short}: no transcript")
+                skipped += 1
+                continue
 
-        tokens = read_session_tokens(transcript_path)
-        if tokens.last_msg_id is None:
-            _console.print(f"  skip {short}: empty transcript")
-            skipped += 1
-            continue
+            tokens = read_session_tokens(transcript_path)
+            if tokens.last_msg_id is None:
+                _console.print(f"  skip {short}: empty transcript")
+                skipped += 1
+                continue
 
-        cost = get_session_cost_usd(
-            tokens.model,
-            tokens.input_tokens,
-            tokens.output_tokens,
-            tokens.cache_creation_tokens,
-            tokens.cache_read_tokens,
-        )
-
-        try:
-            conn.execute(
-                """
-                UPDATE sessions SET
-                    jsonl_input_tokens = ?,
-                    jsonl_output_tokens = ?,
-                    jsonl_cache_creation_tokens = ?,
-                    jsonl_cache_read_tokens = ?,
-                    jsonl_cost_usd = ?,
-                    jsonl_model = ?
-                WHERE id = ?
-                """,
-                (
-                    tokens.input_tokens,
-                    tokens.output_tokens,
-                    tokens.cache_creation_tokens,
-                    tokens.cache_read_tokens,
-                    cost,
-                    tokens.model,
-                    session_id,
-                ),
+            cost = get_session_cost_usd(
+                tokens.model,
+                tokens.input_tokens,
+                tokens.output_tokens,
+                tokens.cache_creation_tokens,
+                tokens.cache_read_tokens,
             )
-            conn.commit()
-        except Exception as e:
-            _console.print(f"[red]  error {short}: {e}[/red]")
-            skipped += 1
-            continue
 
-        total_tokens = tokens.input_tokens + tokens.output_tokens
-        cost_str = f"${cost:.4f}" if cost is not None else "$?.????"
-        _console.print(f"  ok   {short}: {total_tokens} tokens, {cost_str}")
-        filled += 1
+            try:
+                conn.execute(
+                    """
+                    UPDATE sessions SET
+                        jsonl_input_tokens = ?,
+                        jsonl_output_tokens = ?,
+                        jsonl_cache_creation_tokens = ?,
+                        jsonl_cache_read_tokens = ?,
+                        jsonl_cost_usd = ?,
+                        jsonl_model = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        tokens.input_tokens,
+                        tokens.output_tokens,
+                        tokens.cache_creation_tokens,
+                        tokens.cache_read_tokens,
+                        cost,
+                        tokens.model,
+                        session_id,
+                    ),
+                )
+                conn.commit()
+            except Exception as e:
+                _console.print(f"[red]  error {short}: {e}[/red]")
+                skipped += 1
+                continue
 
-    conn.close()
+            total_tokens = tokens.input_tokens + tokens.output_tokens
+            cost_str = f"${cost:.4f}" if cost is not None else "$?.????"
+            _console.print(f"  ok   {short}: {total_tokens} tokens, {cost_str}")
+            filled += 1
+    finally:
+        conn.close()
+
     _console.print(f"Backfilled {filled} sessions, skipped {skipped}.")
 
 
