@@ -478,7 +478,13 @@ class CclogDaemon:
                                 MAX(e.occurred_at) AS last_active,
                                 COUNT(e.id) AS tool_calls,
                                 COALESCE(SUM(tl.gross_input + tl.gross_output), 0) AS total_tokens,
-                                COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost
+                                COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost,
+                                s.jsonl_input_tokens,
+                                s.jsonl_output_tokens,
+                                s.jsonl_cache_creation_tokens,
+                                s.jsonl_cache_read_tokens,
+                                s.jsonl_cost_usd,
+                                s.jsonl_model
                             FROM sessions s
                             LEFT JOIN events e ON e.session_id = s.id
                             LEFT JOIN token_ledger tl ON tl.event_id = e.id
@@ -513,6 +519,12 @@ class CclogDaemon:
                         "tool_calls": row["tool_calls"],
                         "total_tokens": row["total_tokens"],
                         "estimated_cost": row["estimated_cost"],
+                        "jsonl_input_tokens": row["jsonl_input_tokens"],
+                        "jsonl_output_tokens": row["jsonl_output_tokens"],
+                        "jsonl_cache_creation_tokens": row["jsonl_cache_creation_tokens"],
+                        "jsonl_cache_read_tokens": row["jsonl_cache_read_tokens"],
+                        "jsonl_cost_usd": row["jsonl_cost_usd"],
+                        "jsonl_model": row["jsonl_model"],
                     })
 
                 self._send_json(result)
@@ -541,7 +553,13 @@ class CclogDaemon:
                                 MAX(e.occurred_at) AS last_active,
                                 COUNT(e.id) AS tool_calls,
                                 COALESCE(SUM(tl.gross_input + tl.gross_output), 0) AS total_tokens,
-                                COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost
+                                COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost,
+                                s.jsonl_input_tokens,
+                                s.jsonl_output_tokens,
+                                s.jsonl_cache_creation_tokens,
+                                s.jsonl_cache_read_tokens,
+                                s.jsonl_cost_usd,
+                                s.jsonl_model
                             FROM sessions s
                             LEFT JOIN events e ON e.session_id = s.id
                             LEFT JOIN token_ledger tl ON tl.event_id = e.id
@@ -616,6 +634,12 @@ class CclogDaemon:
                     "tool_calls": row["tool_calls"],
                     "total_tokens": row["total_tokens"],
                     "estimated_cost": row["estimated_cost"],
+                    "jsonl_input_tokens": row["jsonl_input_tokens"],
+                    "jsonl_output_tokens": row["jsonl_output_tokens"],
+                    "jsonl_cache_creation_tokens": row["jsonl_cache_creation_tokens"],
+                    "jsonl_cache_read_tokens": row["jsonl_cache_read_tokens"],
+                    "jsonl_cost_usd": row["jsonl_cost_usd"],
+                    "jsonl_model": row["jsonl_model"],
                     "events": events_list,
                 }
                 self._send_json(result)
