@@ -167,7 +167,10 @@ def cmd_today(args) -> None:
             s.cwd,
             COUNT(DISTINCT e.id) AS tool_calls,
             COALESCE(SUM(tl.gross_input + tl.gross_output), 0) AS total_tokens,
-            COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost
+            COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost,
+            s.jsonl_input_tokens,
+            s.jsonl_output_tokens,
+            s.jsonl_cost_usd
         FROM sessions s
         LEFT JOIN events e ON e.session_id = s.id AND DATE(e.occurred_at/1000, 'unixepoch') = DATE('now')
         LEFT JOIN token_ledger tl ON tl.event_id = e.id
@@ -190,7 +193,7 @@ def cmd_today(args) -> None:
     table.add_column("Folder", style="cyan")
     table.add_column("Tool Calls", justify="right")
     table.add_column("Tokens", justify="right")
-    table.add_column("Est. Cost", justify="right")
+    table.add_column("Cost", justify="right")
 
     total_calls = 0
     total_tokens = 0
@@ -199,8 +202,10 @@ def cmd_today(args) -> None:
     for row in rows:
         cwd = row["cwd"] or ""
         calls = row["tool_calls"]
-        tokens = row["total_tokens"]
-        cost = row["estimated_cost"]
+        jsonl_tokens = (row["jsonl_input_tokens"] or 0) + (row["jsonl_output_tokens"] or 0)
+        tokens = jsonl_tokens if jsonl_tokens > 0 else row["total_tokens"]
+        jsonl_cost = row["jsonl_cost_usd"]
+        cost = jsonl_cost if (jsonl_cost is not None and jsonl_cost > 0) else row["estimated_cost"]
         total_calls += calls
         total_tokens += tokens
         total_cost += cost
@@ -224,7 +229,8 @@ def cmd_sessions(args) -> None:
     try:
         sql = """
         SELECT s.id, s.name, s.cwd, s.started_at, MAX(e.occurred_at) AS last_active,
-               COUNT(e.id) AS tool_calls, COALESCE(SUM(tl.cost_usd), 0.0) AS cost
+               COUNT(e.id) AS tool_calls, COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost,
+               s.jsonl_cost_usd
         FROM sessions s
         LEFT JOIN events e ON e.session_id = s.id
         LEFT JOIN token_ledger tl ON tl.event_id = e.id
@@ -272,7 +278,9 @@ def cmd_sessions(args) -> None:
         cwd = row["cwd"] or ""
         name_display = row["name"] or (cwd).rsplit("/", 1)[-1] or row["id"][:8]
         calls = str(row["tool_calls"])
-        cost = f"${row['cost']:.4f}"
+        jsonl_cost = row["jsonl_cost_usd"]
+        cost_val = jsonl_cost if (jsonl_cost is not None and jsonl_cost > 0) else row["estimated_cost"]
+        cost = f"${cost_val:.4f}"
 
         table.add_row(status, started_str, last_str, name_display, cwd, calls, cost)
 
