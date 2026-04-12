@@ -158,6 +158,12 @@ function renderDetail(session) {
     const detail = document.getElementById('detail-panel');
     const rawEventsOpen = detail.querySelector('details')?.open ?? false;
 
+    // Save which event JSON rows are currently expanded
+    const expandedEvIds = new Set();
+    detail.querySelectorAll('.ev-json-row').forEach(row => {
+        if (row.style.display !== 'none') expandedEvIds.add(row.id);
+    });
+
     // ── Tool breakdown ──
     const toolMap = new Map();
     const events = session.events || [];
@@ -321,11 +327,15 @@ function renderDetail(session) {
         });
     }
 
-    // Wire up event JSON toggles
+    // Wire up event JSON toggles and restore previously expanded rows
     detail.querySelectorAll('.ev-toggle').forEach(btn => {
+        const targetId = btn.dataset.target;
+        const row = document.getElementById(targetId);
+        if (row && expandedEvIds.has(targetId)) {
+            row.style.display = 'table-row';
+            btn.textContent = '▼';
+        }
         btn.addEventListener('click', () => {
-            const targetId = btn.dataset.target;
-            const row = document.getElementById(targetId);
             if (!row) return;
             const open = row.style.display !== 'none';
             row.style.display = open ? 'none' : 'table-row';
