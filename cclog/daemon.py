@@ -373,23 +373,11 @@ class CclogDaemon:
     # ------------------------------------------------------------------
 
     def _broadcast_sse(self, event: HookEvent) -> None:
-        msg = json.dumps({
+        self._broadcast_sse_dict({
             "type": "session_update",
             "session_id": event.session_id,
             "timestamp": event.received_at,
         })
-        data = f"data: {msg}\n\n".encode()
-
-        with self._sse_lock:
-            dead: List[Any] = []
-            for wfile in self._sse_clients:
-                try:
-                    wfile.write(data)
-                    wfile.flush()
-                except Exception:
-                    dead.append(wfile)
-            for wfile in dead:
-                self._sse_clients.remove(wfile)
 
     def _broadcast_sse_dict(self, msg: dict) -> None:
         """Broadcast an arbitrary dict as an SSE event."""

@@ -126,6 +126,10 @@ def _handle_stop(payload: dict) -> None:
         return
 
     tokens = read_session_tokens(transcript_path)
+    # If no assistant entries were found, the transcript may not be flushed yet.
+    # Skip the write to avoid overwriting valid non-zero values with zeros.
+    if tokens.last_msg_id is None:
+        return
     cost = get_session_cost_usd(
         tokens.model,
         tokens.input_tokens,
@@ -189,12 +193,12 @@ def _update_jsonl_tokens_direct(update: dict) -> None:
             WHERE id = ?
             """,
             (
-                update["jsonl_input_tokens"],
-                update["jsonl_output_tokens"],
-                update["jsonl_cache_creation_tokens"],
-                update["jsonl_cache_read_tokens"],
-                update["jsonl_cost_usd"],
-                update["jsonl_model"],
+                update.get("jsonl_input_tokens", 0),
+                update.get("jsonl_output_tokens", 0),
+                update.get("jsonl_cache_creation_tokens", 0),
+                update.get("jsonl_cache_read_tokens", 0),
+                update.get("jsonl_cost_usd", 0.0),
+                update.get("jsonl_model"),
                 session_id,
             ),
         )
