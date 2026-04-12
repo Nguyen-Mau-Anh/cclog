@@ -186,16 +186,29 @@ function renderDetail(session) {
     // ── Raw events (filtered by time range) ──
     const cutoff = eventsTimeRange ? Date.now() - eventsTimeRange : 0;
     const rawEvents = events.filter(ev => !eventsTimeRange || (ev.occurred_at || 0) >= cutoff).reverse();
-    const rawRows = rawEvents.map(ev => {
+    const rawRows = rawEvents.map((ev, i) => {
         const tokens = (ev.gross_input || 0) + (ev.gross_output || 0);
+        const hasJson = ev.input_json != null || ev.output_json != null;
+        const expandId = `ev-json-${i}`;
         return `
-            <tr>
-                <td>${escapeHtml(ev.tool_name || '—')}</td>
+            <tr class="ev-row${hasJson ? ' ev-expandable' : ''}" data-ev-idx="${i}">
+                <td>
+                    ${hasJson ? `<span class="ev-toggle" data-target="${expandId}" title="Show request/response">▶</span> ` : ''}
+                    ${escapeHtml(ev.tool_name || '—')}
+                </td>
                 <td><span class="phase-${ev.phase || ''}">${escapeHtml(ev.phase || '—')}</span></td>
                 <td class="num">${formatTokens(tokens)}</td>
                 <td class="num">${formatCost(ev.cost_usd)}</td>
                 <td class="monospace" style="color:var(--text-muted);font-size:11px">${escapeHtml(relativeTime(ev.occurred_at))}</td>
             </tr>
+            ${hasJson ? `<tr class="ev-json-row" id="${expandId}" style="display:none">
+                <td colspan="5" style="padding:0">
+                    <div class="ev-json-panel">
+                        ${ev.input_json != null ? `<div class="ev-json-block"><div class="ev-json-label">Request</div><pre class="ev-json-pre">${escapeHtml(JSON.stringify(ev.input_json, null, 2))}</pre></div>` : ''}
+                        ${ev.output_json != null ? `<div class="ev-json-block"><div class="ev-json-label">Response</div><pre class="ev-json-pre">${escapeHtml(JSON.stringify(ev.output_json, null, 2))}</pre></div>` : ''}
+                    </div>
+                </td>
+            </tr>` : ''}
         `;
     }).join('');
 
@@ -307,6 +320,18 @@ function renderDetail(session) {
             eventsTimeRange = parseInt(e.target.value, 10);
         });
     }
+
+    // Wire up event JSON toggles
+    detail.querySelectorAll('.ev-toggle').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetId = btn.dataset.target;
+            const row = document.getElementById(targetId);
+            if (!row) return;
+            const open = row.style.display !== 'none';
+            row.style.display = open ? 'none' : 'table-row';
+            btn.textContent = open ? '▶' : '▼';
+        });
+    });
 
     // Wire up back button (mobile)
     const backBtn = document.getElementById('back-btn');

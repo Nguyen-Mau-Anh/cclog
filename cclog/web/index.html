@@ -442,6 +442,54 @@
     .phase-pre  { color: var(--yellow); font-size: 11px; }
     .phase-post { color: var(--green);  font-size: 11px; }
 
+    /* ── Event JSON expand ───────────────────────────────── */
+
+    .ev-toggle {
+      cursor: pointer;
+      font-size: 10px;
+      color: var(--text-dim);
+      user-select: none;
+    }
+    .ev-expandable:hover .ev-toggle { color: var(--text); }
+
+    .ev-json-panel {
+      display: flex;
+      gap: 12px;
+      padding: 8px 12px 12px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+
+    .ev-json-block {
+      flex: 1;
+      min-width: 220px;
+    }
+
+    .ev-json-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+
+    .ev-json-pre {
+      margin: 0;
+      font-family: 'Cascadia Code', 'Fira Code', monospace;
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 300px;
+      overflow-y: auto;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 8px;
+    }
+
     .monospace {
       font-family: 'Cascadia Code', 'Fira Code', monospace;
       font-size: 12px;

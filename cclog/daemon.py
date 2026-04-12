@@ -579,6 +579,8 @@ class CclogDaemon:
                                     e.phase,
                                     e.tool_name,
                                     e.occurred_at,
+                                    e.input_json,
+                                    e.output_json,
                                     tl.gross_input,
                                     tl.gross_output,
                                     tl.net_input,
@@ -612,11 +614,21 @@ class CclogDaemon:
 
                 events_list = []
                 for er in event_rows:
+                    import json as _json
+                    def _parse_json_field(raw):
+                        if not raw:
+                            return None
+                        try:
+                            return _json.loads(raw)
+                        except Exception:
+                            return raw
                     events_list.append({
                         "id": er["id"],
                         "phase": er["phase"],
                         "tool_name": er["tool_name"],
                         "occurred_at": er["occurred_at"],
+                        "input_json": _parse_json_field(er["input_json"]),
+                        "output_json": _parse_json_field(er["output_json"]),
                         "gross_input": er["gross_input"],
                         "gross_output": er["gross_output"],
                         "net_input": er["net_input"],
