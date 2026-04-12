@@ -105,7 +105,7 @@ function renderSessionList() {
         const cwd = cwdDisplay(s.cwd);
         const label = sessionLabel(s);
         const sublabel = sessionSublabel(s);
-        const cost = formatCost(s.estimated_cost);
+        const cost = formatCost((s.jsonl_cost_usd != null && s.jsonl_cost_usd > 0) ? s.jsonl_cost_usd : s.estimated_cost);
         const calls = s.tool_calls || 0;
         const sublabelHtml = sublabel
             ? `<div class="session-meta" style="font-size:10px;color:var(--text-dim)">${escapeHtml(sublabel)}</div>`
@@ -229,7 +229,7 @@ function renderDetail(session) {
         <div class="stats-row">
             <div class="stat-card">
                 <div class="stat-label">Total cost</div>
-                <div class="stat-value">${formatCost(session.estimated_cost)}</div>
+                <div class="stat-value">${formatCost((session.jsonl_cost_usd != null && session.jsonl_cost_usd > 0) ? session.jsonl_cost_usd : session.estimated_cost)}</div>
             </div>
             <div class="stat-card">
                 <div class="stat-label">Tool calls</div>
@@ -237,8 +237,13 @@ function renderDetail(session) {
             </div>
             <div class="stat-card">
                 <div class="stat-label">Total tokens</div>
-                <div class="stat-value">${formatTokens(session.total_tokens)}</div>
+                <div class="stat-value">${formatTokens(((session.jsonl_input_tokens || 0) + (session.jsonl_output_tokens || 0)) > 0 ? (session.jsonl_input_tokens || 0) + (session.jsonl_output_tokens || 0) : session.total_tokens)}</div>
             </div>
+            ${((session.jsonl_cache_creation_tokens || 0) + (session.jsonl_cache_read_tokens || 0)) > 0 ? `
+            <div class="stat-card">
+                <div class="stat-label">Cache tokens</div>
+                <div class="stat-value">${formatTokens((session.jsonl_cache_creation_tokens || 0) + (session.jsonl_cache_read_tokens || 0))}</div>
+            </div>` : ''}
         </div>
 
         <div class="tool-section">

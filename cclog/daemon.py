@@ -209,6 +209,11 @@ class CclogDaemon:
             except json.JSONDecodeError:
                 return
 
+            # Route JSONL token updates to their own handler
+            if payload.get("type") == "jsonl_token_update":
+                self._update_jsonl_tokens(payload)
+                return
+
             phase = payload.get("_phase") or payload.get("phase") or "post"
             received_at = int(time.time() * 1000)
 
@@ -319,18 +324,64 @@ class CclogDaemon:
             finally:
                 conn.close()
 
+    def _update_jsonl_tokens(self, data: dict) -> None:
+        """Update session with JSONL-sourced accurate token totals."""
+        from cclog.db import get_db
+
+        session_id = data.get("session_id")
+        if not session_id:
+            return
+
+        with self._db_lock:
+            conn = get_db(self.db_path)
+            try:
+                # Ensure session exists (Stop hook may arrive before tool hooks)
+                conn.execute(
+                    "INSERT OR IGNORE INTO sessions (id, started_at, model, cwd) VALUES (?,?,?,?)",
+                    (session_id, int(time.time() * 1000), data.get("jsonl_model"), ""),
+                )
+                conn.execute(
+                    """
+                    UPDATE sessions SET
+                        jsonl_input_tokens = ?,
+                        jsonl_output_tokens = ?,
+                        jsonl_cache_creation_tokens = ?,
+                        jsonl_cache_read_tokens = ?,
+                        jsonl_cost_usd = ?,
+                        jsonl_model = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        data.get("jsonl_input_tokens", 0),
+                        data.get("jsonl_output_tokens", 0),
+                        data.get("jsonl_cache_creation_tokens", 0),
+                        data.get("jsonl_cache_read_tokens", 0),
+                        data.get("jsonl_cost_usd", 0.0),
+                        data.get("jsonl_model"),
+                        session_id,
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+        # Broadcast SSE so dashboard refreshes
+        self._broadcast_sse_dict({"type": "session_update", "session_id": session_id})
+
     # ------------------------------------------------------------------
     # SSE broadcasting
     # ------------------------------------------------------------------
 
     def _broadcast_sse(self, event: HookEvent) -> None:
-        msg = json.dumps({
+        self._broadcast_sse_dict({
             "type": "session_update",
             "session_id": event.session_id,
             "timestamp": event.received_at,
         })
-        data = f"data: {msg}\n\n".encode()
 
+    def _broadcast_sse_dict(self, msg: dict) -> None:
+        """Broadcast an arbitrary dict as an SSE event."""
+        data = f"data: {json.dumps(msg)}\n\n".encode()
         with self._sse_lock:
             dead: List[Any] = []
             for wfile in self._sse_clients:
@@ -427,7 +478,13 @@ class CclogDaemon:
                                 MAX(e.occurred_at) AS last_active,
                                 COUNT(e.id) AS tool_calls,
                                 COALESCE(SUM(tl.gross_input + tl.gross_output), 0) AS total_tokens,
-                                COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost
+                                COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost,
+                                s.jsonl_input_tokens,
+                                s.jsonl_output_tokens,
+                                s.jsonl_cache_creation_tokens,
+                                s.jsonl_cache_read_tokens,
+                                s.jsonl_cost_usd,
+                                s.jsonl_model
                             FROM sessions s
                             LEFT JOIN events e ON e.session_id = s.id
                             LEFT JOIN token_ledger tl ON tl.event_id = e.id
@@ -462,6 +519,12 @@ class CclogDaemon:
                         "tool_calls": row["tool_calls"],
                         "total_tokens": row["total_tokens"],
                         "estimated_cost": row["estimated_cost"],
+                        "jsonl_input_tokens": row["jsonl_input_tokens"],
+                        "jsonl_output_tokens": row["jsonl_output_tokens"],
+                        "jsonl_cache_creation_tokens": row["jsonl_cache_creation_tokens"],
+                        "jsonl_cache_read_tokens": row["jsonl_cache_read_tokens"],
+                        "jsonl_cost_usd": row["jsonl_cost_usd"],
+                        "jsonl_model": row["jsonl_model"],
                     })
 
                 self._send_json(result)
@@ -490,7 +553,13 @@ class CclogDaemon:
                                 MAX(e.occurred_at) AS last_active,
                                 COUNT(e.id) AS tool_calls,
                                 COALESCE(SUM(tl.gross_input + tl.gross_output), 0) AS total_tokens,
-                                COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost
+                                COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost,
+                                s.jsonl_input_tokens,
+                                s.jsonl_output_tokens,
+                                s.jsonl_cache_creation_tokens,
+                                s.jsonl_cache_read_tokens,
+                                s.jsonl_cost_usd,
+                                s.jsonl_model
                             FROM sessions s
                             LEFT JOIN events e ON e.session_id = s.id
                             LEFT JOIN token_ledger tl ON tl.event_id = e.id
@@ -565,6 +634,12 @@ class CclogDaemon:
                     "tool_calls": row["tool_calls"],
                     "total_tokens": row["total_tokens"],
                     "estimated_cost": row["estimated_cost"],
+                    "jsonl_input_tokens": row["jsonl_input_tokens"],
+                    "jsonl_output_tokens": row["jsonl_output_tokens"],
+                    "jsonl_cache_creation_tokens": row["jsonl_cache_creation_tokens"],
+                    "jsonl_cache_read_tokens": row["jsonl_cache_read_tokens"],
+                    "jsonl_cost_usd": row["jsonl_cost_usd"],
+                    "jsonl_model": row["jsonl_model"],
                     "events": events_list,
                 }
                 self._send_json(result)

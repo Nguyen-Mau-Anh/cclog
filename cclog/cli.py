@@ -167,7 +167,10 @@ def cmd_today(args) -> None:
             s.cwd,
             COUNT(DISTINCT e.id) AS tool_calls,
             COALESCE(SUM(tl.gross_input + tl.gross_output), 0) AS total_tokens,
-            COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost
+            COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost,
+            s.jsonl_input_tokens,
+            s.jsonl_output_tokens,
+            s.jsonl_cost_usd
         FROM sessions s
         LEFT JOIN events e ON e.session_id = s.id AND DATE(e.occurred_at/1000, 'unixepoch') = DATE('now')
         LEFT JOIN token_ledger tl ON tl.event_id = e.id
@@ -190,7 +193,7 @@ def cmd_today(args) -> None:
     table.add_column("Folder", style="cyan")
     table.add_column("Tool Calls", justify="right")
     table.add_column("Tokens", justify="right")
-    table.add_column("Est. Cost", justify="right")
+    table.add_column("Cost", justify="right")
 
     total_calls = 0
     total_tokens = 0
@@ -199,8 +202,10 @@ def cmd_today(args) -> None:
     for row in rows:
         cwd = row["cwd"] or ""
         calls = row["tool_calls"]
-        tokens = row["total_tokens"]
-        cost = row["estimated_cost"]
+        jsonl_tokens = (row["jsonl_input_tokens"] or 0) + (row["jsonl_output_tokens"] or 0)
+        tokens = jsonl_tokens if jsonl_tokens > 0 else row["total_tokens"]
+        jsonl_cost = row["jsonl_cost_usd"]
+        cost = jsonl_cost if (jsonl_cost is not None and jsonl_cost > 0) else row["estimated_cost"]
         total_calls += calls
         total_tokens += tokens
         total_cost += cost
@@ -224,7 +229,8 @@ def cmd_sessions(args) -> None:
     try:
         sql = """
         SELECT s.id, s.name, s.cwd, s.started_at, MAX(e.occurred_at) AS last_active,
-               COUNT(e.id) AS tool_calls, COALESCE(SUM(tl.cost_usd), 0.0) AS cost
+               COUNT(e.id) AS tool_calls, COALESCE(SUM(tl.cost_usd), 0.0) AS estimated_cost,
+               s.jsonl_cost_usd
         FROM sessions s
         LEFT JOIN events e ON e.session_id = s.id
         LEFT JOIN token_ledger tl ON tl.event_id = e.id
@@ -272,7 +278,9 @@ def cmd_sessions(args) -> None:
         cwd = row["cwd"] or ""
         name_display = row["name"] or (cwd).rsplit("/", 1)[-1] or row["id"][:8]
         calls = str(row["tool_calls"])
-        cost = f"${row['cost']:.4f}"
+        jsonl_cost = row["jsonl_cost_usd"]
+        cost_val = jsonl_cost if (jsonl_cost is not None and jsonl_cost > 0) else row["estimated_cost"]
+        cost = f"${cost_val:.4f}"
 
         table.add_row(status, started_str, last_str, name_display, cwd, calls, cost)
 
@@ -285,6 +293,90 @@ def _fmt_time(ms: Optional[int]) -> str:
     import datetime
     dt = datetime.datetime.fromtimestamp(ms / 1000)
     return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def cmd_backfill(args) -> None:
+    from cclog.jsonl import find_transcript, read_session_tokens
+    from cclog.pricing import get_session_cost_usd
+
+    db = _db_path()
+    try:
+        conn = sqlite3.connect(db)
+        conn.row_factory = sqlite3.Row
+    except Exception as e:
+        _console.print(f"[red]Error opening database: {e}[/red]")
+        sys.exit(1)
+
+    try:
+        rows = conn.execute("SELECT id FROM sessions ORDER BY started_at").fetchall()
+    except Exception as e:
+        _console.print(f"[red]Query error: {e}[/red]")
+        sys.exit(1)
+
+    filled = 0
+    skipped = 0
+
+    try:
+        for row in rows:
+            session_id = row["id"]
+            short = session_id[:8]
+
+            transcript_path = find_transcript(session_id)
+            if transcript_path is None:
+                _console.print(f"  skip {short}: no transcript")
+                skipped += 1
+                continue
+
+            tokens = read_session_tokens(transcript_path)
+            if tokens.last_msg_id is None:
+                _console.print(f"  skip {short}: empty transcript")
+                skipped += 1
+                continue
+
+            cost = get_session_cost_usd(
+                tokens.model,
+                tokens.input_tokens,
+                tokens.output_tokens,
+                tokens.cache_creation_tokens,
+                tokens.cache_read_tokens,
+            )
+
+            try:
+                conn.execute(
+                    """
+                    UPDATE sessions SET
+                        jsonl_input_tokens = ?,
+                        jsonl_output_tokens = ?,
+                        jsonl_cache_creation_tokens = ?,
+                        jsonl_cache_read_tokens = ?,
+                        jsonl_cost_usd = ?,
+                        jsonl_model = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        tokens.input_tokens,
+                        tokens.output_tokens,
+                        tokens.cache_creation_tokens,
+                        tokens.cache_read_tokens,
+                        cost,
+                        tokens.model,
+                        session_id,
+                    ),
+                )
+                conn.commit()
+            except Exception as e:
+                _console.print(f"[red]  error {short}: {e}[/red]")
+                skipped += 1
+                continue
+
+            total_tokens = tokens.input_tokens + tokens.output_tokens
+            cost_str = f"${cost:.4f}" if cost is not None else "$?.????"
+            _console.print(f"  ok   {short}: {total_tokens} tokens, {cost_str}")
+            filled += 1
+    finally:
+        conn.close()
+
+    _console.print(f"Backfilled {filled} sessions, skipped {skipped}.")
 
 
 def cmd_query(args) -> None:
@@ -338,6 +430,8 @@ def main() -> None:
     p_query = sub.add_parser("query", help="Run a raw SQL query")
     p_query.add_argument("sql", help="SQL query string")
 
+    sub.add_parser("backfill", help="Backfill JSONL token data for all sessions")
+
     args = parser.parse_args()
 
     commands = {
@@ -348,6 +442,7 @@ def main() -> None:
         "today": cmd_today,
         "sessions": cmd_sessions,
         "query": cmd_query,
+        "backfill": cmd_backfill,
     }
 
     if args.command is None:

@@ -84,3 +84,39 @@ def test_get_cost_usd_negative_tokens_clamped_to_zero():
     """Negative token counts are clamped to 0, not producing negative cost."""
     cost = get_cost_usd("claude-3-5-sonnet", input_tok=-100, output_tok=-50)
     assert cost == 0.0
+
+
+# Tests for get_session_cost_usd
+from cclog.pricing import get_session_cost_usd
+
+
+def test_get_session_cost_usd_known_model_no_cache():
+    """Known model (claude-sonnet-4-6), no cache tokens → correct USD amount."""
+    # input_tokens=1000, output_tokens=500
+    # (1000 * 3.0 + 500 * 15.0) / 1_000_000 = (3000 + 7500) / 1_000_000 = 0.0105
+    cost = get_session_cost_usd("claude-sonnet-4-6", input_tokens=1000, output_tokens=500)
+    assert cost is not None
+    assert abs(cost - 0.0105) < 1e-6
+
+
+def test_get_session_cost_usd_with_cache_tokens():
+    """Known model with cache tokens → includes cache write + read pricing."""
+    # claude-sonnet-4-6: cache_write=3.75/M, cache_read=0.30/M
+    # input_tokens=0, output_tokens=0, cache_creation_tokens=1000, cache_read_tokens=2000
+    # (0 * 3.0 + 0 * 15.0 + 1000 * 3.75 + 2000 * 0.30) / 1_000_000
+    # = (0 + 0 + 3750 + 600) / 1_000_000 = 4350 / 1_000_000 = 0.00435
+    cost = get_session_cost_usd(
+        "claude-sonnet-4-6",
+        input_tokens=0,
+        output_tokens=0,
+        cache_creation_tokens=1000,
+        cache_read_tokens=2000,
+    )
+    assert cost is not None
+    assert abs(cost - 0.00435) < 1e-6
+
+
+def test_get_session_cost_usd_unknown_model_returns_none():
+    """Unknown model → returns None."""
+    result = get_session_cost_usd("claude-unknown-xyz", input_tokens=100, output_tokens=100)
+    assert result is None

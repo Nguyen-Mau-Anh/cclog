@@ -41,11 +41,28 @@ CREATE INDEX IF NOT EXISTS idx_events_time    ON events(occurred_at);
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Apply incremental migrations."""
+    # Migration 1: add session name
     try:
         conn.execute("ALTER TABLE sessions ADD COLUMN name TEXT")
         conn.commit()
     except sqlite3.OperationalError:
         pass  # Column already exists
+
+    # Migration 2: add JSONL-sourced accurate token columns
+    new_columns = [
+        ("jsonl_input_tokens",          "INTEGER DEFAULT 0"),
+        ("jsonl_output_tokens",         "INTEGER DEFAULT 0"),
+        ("jsonl_cache_creation_tokens", "INTEGER DEFAULT 0"),
+        ("jsonl_cache_read_tokens",     "INTEGER DEFAULT 0"),
+        ("jsonl_cost_usd",              "REAL DEFAULT 0.0"),
+        ("jsonl_model",                 "TEXT"),
+    ]
+    for col, col_def in new_columns:
+        try:
+            conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {col_def}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
 
 def setup_schema(conn: sqlite3.Connection) -> None:
