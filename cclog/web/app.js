@@ -157,6 +157,7 @@ async function selectSession(id) {
 function renderDetail(session) {
     const detail = document.getElementById('detail-panel');
     const rawEventsOpen = detail.querySelector('details')?.open ?? false;
+    const scrollTop = detail.scrollTop;
 
     // Save which event JSON rows are currently expanded
     const expandedEvIds = new Set();
@@ -345,6 +346,9 @@ function renderDetail(session) {
             renderSessionList();
         });
     }
+
+    // Restore scroll position after re-render
+    detail.scrollTop = scrollTop;
 }
 
 // ── Silent detail refresh (no loading flash) ──────────────────────────────
