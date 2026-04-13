@@ -161,10 +161,14 @@ function renderDetail(session) {
     const scrollTop = detail.scrollTop;
     const rawTableScrollTop = detail.querySelector('.raw-events-table')?.scrollTop ?? 0;
 
-    // Save which event JSON rows are currently expanded
+    // Save which event JSON rows are expanded and their pre scroll positions
     const expandedEvIds = new Set();
+    const evPreScrolls = new Map(); // targetId → [scrollTop, ...]
     detail.querySelectorAll('.ev-json-row').forEach(row => {
-        if (row.style.display !== 'none') expandedEvIds.add(row.id);
+        if (row.style.display !== 'none') {
+            expandedEvIds.add(row.id);
+            evPreScrolls.set(row.id, Array.from(row.querySelectorAll('.ev-json-pre')).map(p => p.scrollTop));
+        }
     });
 
     // ── Tool breakdown ──
@@ -326,21 +330,26 @@ function renderDetail(session) {
         const targetId = btn.dataset.target;
         const evId = btn.dataset.evId;
 
-        function renderCached(panel, data) {
+        function renderCached(panel, data, scrolls) {
             panel.innerHTML =
                 (data.input_json != null ? `<div class="ev-json-block"><div class="ev-json-label">Request</div><pre class="ev-json-pre">${escapeHtml(JSON.stringify(data.input_json, null, 2))}</pre></div>` : '') +
                 (data.output_json != null ? `<div class="ev-json-block"><div class="ev-json-label">Response</div><pre class="ev-json-pre">${escapeHtml(JSON.stringify(data.output_json, null, 2))}</pre></div>` : '') ||
                 '<div style="padding:8px 12px;color:var(--text-dim);font-size:12px">No data.</div>';
+            if (scrolls) {
+                panel.querySelectorAll('.ev-json-pre').forEach((pre, i) => {
+                    if (scrolls[i]) pre.scrollTop = scrolls[i];
+                });
+            }
         }
 
-        async function loadAndShow() {
+        async function loadAndShow(savedScrolls) {
             // Always look up current DOM nodes — closures go stale after re-render
             const row = document.getElementById(targetId);
             const panel = document.getElementById(`${targetId}-panel`);
             if (!row || !panel) return;
 
             if (eventJsonCache.has(evId)) {
-                renderCached(panel, eventJsonCache.get(evId));
+                renderCached(panel, eventJsonCache.get(evId), savedScrolls);
                 return;
             }
             try {
@@ -357,11 +366,11 @@ function renderDetail(session) {
             }
         }
 
-        // Restore previously expanded row
+        // Restore previously expanded row (pass saved pre scroll positions)
         if (expandedEvIds.has(targetId)) {
             const row = document.getElementById(targetId);
             if (row) { row.style.display = 'table-row'; btn.textContent = '▼'; }
-            loadAndShow();
+            loadAndShow(evPreScrolls.get(targetId));
         }
 
         btn.addEventListener('click', () => {
