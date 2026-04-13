@@ -158,6 +158,7 @@ function renderDetail(session) {
     const detail = document.getElementById('detail-panel');
     const rawEventsOpen = detail.querySelector('details')?.open ?? false;
     const scrollTop = detail.scrollTop;
+    const rawTableScrollTop = detail.querySelector('.raw-events-table')?.scrollTop ?? 0;
 
     // Save which event JSON rows are currently expanded
     const expandedEvIds = new Set();
@@ -347,8 +348,10 @@ function renderDetail(session) {
         });
     }
 
-    // Restore scroll position after re-render
+    // Restore scroll positions after re-render
     detail.scrollTop = scrollTop;
+    const rawTable = detail.querySelector('.raw-events-table');
+    if (rawTable) rawTable.scrollTop = rawTableScrollTop;
 }
 
 // ── Silent detail refresh (no loading flash) ──────────────────────────────
