@@ -254,15 +254,8 @@ function renderDetail(session) {
                 <div class="stat-label">Tool calls</div>
                 <div class="stat-value">${session.tool_calls || 0}</div>
             </div>
-            <div class="stat-card">
-                <div class="stat-label">Total tokens</div>
-                <div class="stat-value">${formatTokens(((session.jsonl_input_tokens || 0) + (session.jsonl_output_tokens || 0)) > 0 ? (session.jsonl_input_tokens || 0) + (session.jsonl_output_tokens || 0) : session.total_tokens)}</div>
-            </div>
-            ${((session.jsonl_cache_creation_tokens || 0) + (session.jsonl_cache_read_tokens || 0)) > 0 ? `
-            <div class="stat-card">
-                <div class="stat-label">Cache tokens</div>
-                <div class="stat-value">${formatTokens((session.jsonl_cache_creation_tokens || 0) + (session.jsonl_cache_read_tokens || 0))}</div>
-            </div>` : ''}
+            ${(() => { const t = ((session.jsonl_input_tokens || 0) + (session.jsonl_output_tokens || 0)) > 0 ? (session.jsonl_input_tokens || 0) + (session.jsonl_output_tokens || 0) : (session.total_tokens || 0); return `<div class="stat-card" title="${t.toLocaleString()} tokens"><div class="stat-label">Total tokens</div><div class="stat-value">${formatTokens(t)}</div></div>`; })()}
+            ${(() => { const c = (session.jsonl_cache_creation_tokens || 0) + (session.jsonl_cache_read_tokens || 0); return c > 0 ? `<div class="stat-card" title="${c.toLocaleString()} cache tokens"><div class="stat-label">Cache tokens</div><div class="stat-value">${formatTokens(c)}</div></div>` : ''; })()}
         </div>
 
         <div class="tool-section">
