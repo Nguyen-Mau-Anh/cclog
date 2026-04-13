@@ -7,6 +7,7 @@ let selectedSessionId = null;
 let searchQuery = '';
 let statusFilter = 'all'; // 'all' | 'active' | 'active_idle'
 let eventsTimeRange = 3_600_000; // ms; 0 = all time
+const eventJsonCache = new Map(); // evId → {input_json, output_json}
 
 // ── Helper functions ──────────────────────────────────────────────────────
 
@@ -324,39 +325,47 @@ function renderDetail(session) {
     detail.querySelectorAll('.ev-toggle').forEach(btn => {
         const targetId = btn.dataset.target;
         const evId = btn.dataset.evId;
-        const row = document.getElementById(targetId);
-        const panel = document.getElementById(`${targetId}-panel`);
+
+        function renderCached(panel, data) {
+            panel.innerHTML =
+                (data.input_json != null ? `<div class="ev-json-block"><div class="ev-json-label">Request</div><pre class="ev-json-pre">${escapeHtml(JSON.stringify(data.input_json, null, 2))}</pre></div>` : '') +
+                (data.output_json != null ? `<div class="ev-json-block"><div class="ev-json-label">Response</div><pre class="ev-json-pre">${escapeHtml(JSON.stringify(data.output_json, null, 2))}</pre></div>` : '') ||
+                '<div style="padding:8px 12px;color:var(--text-dim);font-size:12px">No data.</div>';
+        }
 
         async function loadAndShow() {
+            // Always look up current DOM nodes — closures go stale after re-render
+            const row = document.getElementById(targetId);
+            const panel = document.getElementById(`${targetId}-panel`);
             if (!row || !panel) return;
-            // Fetch only if not yet loaded
-            if (!panel.dataset.loaded) {
-                try {
-                    const resp = await fetch(`/api/events/${encodeURIComponent(evId)}`);
-                    const data = resp.ok ? await resp.json() : null;
-                    if (data) {
-                        panel.innerHTML =
-                            (data.input_json != null ? `<div class="ev-json-block"><div class="ev-json-label">Request</div><pre class="ev-json-pre">${escapeHtml(JSON.stringify(data.input_json, null, 2))}</pre></div>` : '') +
-                            (data.output_json != null ? `<div class="ev-json-block"><div class="ev-json-label">Response</div><pre class="ev-json-pre">${escapeHtml(JSON.stringify(data.output_json, null, 2))}</pre></div>` : '') ||
-                            '<div style="padding:8px 12px;color:var(--text-dim);font-size:12px">No data.</div>';
-                        panel.dataset.loaded = '1';
-                    } else {
-                        panel.innerHTML = '<div style="padding:8px 12px;color:var(--danger);font-size:12px">Failed to load.</div>';
-                    }
-                } catch (err) {
-                    panel.innerHTML = `<div style="padding:8px 12px;color:var(--danger);font-size:12px">${escapeHtml(String(err))}</div>`;
+
+            if (eventJsonCache.has(evId)) {
+                renderCached(panel, eventJsonCache.get(evId));
+                return;
+            }
+            try {
+                const resp = await fetch(`/api/events/${encodeURIComponent(evId)}`);
+                const data = resp.ok ? await resp.json() : null;
+                if (data) {
+                    eventJsonCache.set(evId, data);
+                    renderCached(panel, data);
+                } else {
+                    panel.innerHTML = '<div style="padding:8px 12px;color:var(--danger);font-size:12px">Failed to load.</div>';
                 }
+            } catch (err) {
+                panel.innerHTML = `<div style="padding:8px 12px;color:var(--danger);font-size:12px">${escapeHtml(String(err))}</div>`;
             }
         }
 
         // Restore previously expanded row
-        if (row && expandedEvIds.has(targetId)) {
-            row.style.display = 'table-row';
-            btn.textContent = '▼';
+        if (expandedEvIds.has(targetId)) {
+            const row = document.getElementById(targetId);
+            if (row) { row.style.display = 'table-row'; btn.textContent = '▼'; }
             loadAndShow();
         }
 
         btn.addEventListener('click', () => {
+            const row = document.getElementById(targetId);
             if (!row) return;
             const open = row.style.display !== 'none';
             row.style.display = open ? 'none' : 'table-row';
