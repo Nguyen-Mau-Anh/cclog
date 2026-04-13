@@ -305,16 +305,18 @@
 
     .stats-row {
       display: flex;
-      gap: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
       margin-bottom: 20px;
     }
 
     .stat-card {
-      flex: 1;
+      flex: 1 1 80px;
+      min-width: 0;
       background: var(--bg-panel);
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 10px 14px;
+      padding: 10px 12px;
     }
 
     .stat-label {
@@ -322,6 +324,9 @@
       color: var(--text-muted);
       text-transform: uppercase;
       letter-spacing: 0.06em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .stat-value {
@@ -329,6 +334,9 @@
       font-weight: 700;
       color: var(--text);
       margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     /* ── Tables ──────────────────────────────────────────── */
@@ -529,7 +537,12 @@
 
       .detail-panel {
         width: 100%;
-        padding: 14px 16px;
+        padding: 14px 12px;
+        overflow-x: hidden;
+      }
+
+      .stat-value {
+        font-size: 15px;
       }
 
       /* When a session is selected on mobile, hide list, show detail */
