@@ -424,6 +424,9 @@ class CclogDaemon:
                     self._serve_app_js()
                 elif path == "/api/sessions":
                     self._serve_sessions()
+                elif path.startswith("/api/events/"):
+                    event_id = path[len("/api/events/"):]
+                    self._serve_event_json(event_id)
                 elif path.startswith("/api/sessions/"):
                     session_id = path[len("/api/sessions/"):]
                     self._serve_session_detail(session_id)
@@ -529,6 +532,33 @@ class CclogDaemon:
 
                 self._send_json(result)
 
+            def _serve_event_json(self, event_id: str) -> None:
+                from cclog.db import get_db
+                try:
+                    conn = get_db(_default_db_path())
+                    row = conn.execute(
+                        "SELECT input_json, output_json FROM events WHERE id = ?",
+                        (event_id,),
+                    ).fetchone()
+                    conn.close()
+                except Exception:
+                    self.send_error(500, "DB error")
+                    return
+                if row is None:
+                    self.send_error(404, "Event not found")
+                    return
+                def _parse(raw):
+                    if not raw:
+                        return None
+                    try:
+                        return json.loads(raw)
+                    except Exception:
+                        return raw
+                self._send_json({
+                    "input_json": _parse(row["input_json"]),
+                    "output_json": _parse(row["output_json"]),
+                })
+
             def _serve_session_detail(self, session_id: str) -> None:
                 from cclog.db import get_db
 
@@ -579,8 +609,6 @@ class CclogDaemon:
                                     e.phase,
                                     e.tool_name,
                                     e.occurred_at,
-                                    e.input_json,
-                                    e.output_json,
                                     tl.gross_input,
                                     tl.gross_output,
                                     tl.net_input,
@@ -614,21 +642,11 @@ class CclogDaemon:
 
                 events_list = []
                 for er in event_rows:
-                    import json as _json
-                    def _parse_json_field(raw):
-                        if not raw:
-                            return None
-                        try:
-                            return _json.loads(raw)
-                        except Exception:
-                            return raw
                     events_list.append({
                         "id": er["id"],
                         "phase": er["phase"],
                         "tool_name": er["tool_name"],
                         "occurred_at": er["occurred_at"],
-                        "input_json": _parse_json_field(er["input_json"]),
-                        "output_json": _parse_json_field(er["output_json"]),
                         "gross_input": er["gross_input"],
                         "gross_output": er["gross_output"],
                         "net_input": er["net_input"],

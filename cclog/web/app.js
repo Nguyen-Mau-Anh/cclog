@@ -196,12 +196,11 @@ function renderDetail(session) {
     const rawEvents = events.filter(ev => !eventsTimeRange || (ev.occurred_at || 0) >= cutoff).reverse();
     const rawRows = rawEvents.map((ev, i) => {
         const tokens = (ev.gross_input || 0) + (ev.gross_output || 0);
-        const hasJson = ev.input_json != null || ev.output_json != null;
         const expandId = `ev-json-${i}`;
         return `
-            <tr class="ev-row${hasJson ? ' ev-expandable' : ''}" data-ev-idx="${i}">
+            <tr class="ev-row ev-expandable" data-ev-id="${ev.id}" data-ev-idx="${i}">
                 <td>
-                    ${hasJson ? `<span class="ev-toggle" data-target="${expandId}" title="Show request/response">▶</span> ` : ''}
+                    <span class="ev-toggle" data-target="${expandId}" data-ev-id="${ev.id}" title="Show request/response">▶</span>
                     ${escapeHtml(ev.tool_name || '—')}
                 </td>
                 <td><span class="phase-${ev.phase || ''}">${escapeHtml(ev.phase || '—')}</span></td>
@@ -209,14 +208,13 @@ function renderDetail(session) {
                 <td class="num">${formatCost(ev.cost_usd)}</td>
                 <td class="monospace" style="color:var(--text-muted);font-size:11px">${escapeHtml(relativeTime(ev.occurred_at))}</td>
             </tr>
-            ${hasJson ? `<tr class="ev-json-row" id="${expandId}" style="display:none">
+            <tr class="ev-json-row" id="${expandId}" style="display:none">
                 <td colspan="5" style="padding:0">
-                    <div class="ev-json-panel">
-                        ${ev.input_json != null ? `<div class="ev-json-block"><div class="ev-json-label">Request</div><pre class="ev-json-pre">${escapeHtml(JSON.stringify(ev.input_json, null, 2))}</pre></div>` : ''}
-                        ${ev.output_json != null ? `<div class="ev-json-block"><div class="ev-json-label">Response</div><pre class="ev-json-pre">${escapeHtml(JSON.stringify(ev.output_json, null, 2))}</pre></div>` : ''}
+                    <div class="ev-json-panel" id="${expandId}-panel">
+                        <div style="padding:8px 12px;color:var(--text-dim);font-size:12px">Loading…</div>
                     </div>
                 </td>
-            </tr>` : ''}
+            </tr>
         `;
     }).join('');
 
@@ -325,16 +323,45 @@ function renderDetail(session) {
     // Wire up event JSON toggles and restore previously expanded rows
     detail.querySelectorAll('.ev-toggle').forEach(btn => {
         const targetId = btn.dataset.target;
+        const evId = btn.dataset.evId;
         const row = document.getElementById(targetId);
+        const panel = document.getElementById(`${targetId}-panel`);
+
+        async function loadAndShow() {
+            if (!row || !panel) return;
+            // Fetch only if not yet loaded
+            if (!panel.dataset.loaded) {
+                try {
+                    const resp = await fetch(`/api/events/${encodeURIComponent(evId)}`);
+                    const data = resp.ok ? await resp.json() : null;
+                    if (data) {
+                        panel.innerHTML =
+                            (data.input_json != null ? `<div class="ev-json-block"><div class="ev-json-label">Request</div><pre class="ev-json-pre">${escapeHtml(JSON.stringify(data.input_json, null, 2))}</pre></div>` : '') +
+                            (data.output_json != null ? `<div class="ev-json-block"><div class="ev-json-label">Response</div><pre class="ev-json-pre">${escapeHtml(JSON.stringify(data.output_json, null, 2))}</pre></div>` : '') ||
+                            '<div style="padding:8px 12px;color:var(--text-dim);font-size:12px">No data.</div>';
+                        panel.dataset.loaded = '1';
+                    } else {
+                        panel.innerHTML = '<div style="padding:8px 12px;color:var(--danger);font-size:12px">Failed to load.</div>';
+                    }
+                } catch (err) {
+                    panel.innerHTML = `<div style="padding:8px 12px;color:var(--danger);font-size:12px">${escapeHtml(String(err))}</div>`;
+                }
+            }
+        }
+
+        // Restore previously expanded row
         if (row && expandedEvIds.has(targetId)) {
             row.style.display = 'table-row';
             btn.textContent = '▼';
+            loadAndShow();
         }
+
         btn.addEventListener('click', () => {
             if (!row) return;
             const open = row.style.display !== 'none';
             row.style.display = open ? 'none' : 'table-row';
             btn.textContent = open ? '▶' : '▼';
+            if (!open) loadAndShow();
         });
     });
 

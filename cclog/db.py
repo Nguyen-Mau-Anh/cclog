@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS token_ledger (
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_tool    ON events(tool_name);
 CREATE INDEX IF NOT EXISTS idx_events_time    ON events(occurred_at);
+CREATE INDEX IF NOT EXISTS idx_events_session_time ON events(session_id, occurred_at);
 """
 
 
