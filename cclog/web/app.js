@@ -236,7 +236,7 @@ function renderDetail(session) {
         const tokens = (ev.gross_input || 0) + (ev.gross_output || 0);
         const expandId = `ev-json-${ev.id}`;
         return `
-            <tr class="ev-row ev-expandable" data-ev-id="${ev.id}" data-ev-idx="${i}">
+            <tr class="ev-row ev-expandable" data-ev-id="${ev.id}">
                 <td>
                     <span class="ev-toggle" data-target="${expandId}" data-ev-id="${ev.id}" title="Show request/response">▶</span>
                     ${escapeHtml(ev.tool_name || '—')}
