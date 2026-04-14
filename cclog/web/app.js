@@ -324,7 +324,33 @@ function renderDetail(session) {
         ${wide ? '</div>' : ''}
 
         <div class="raw-events-section">
-            <details ${wide ? 'open' : ''}>
+            ${wide ? `
+            <div class="raw-events-header">
+                Raw events (${rawEvents.length})
+                <select id="events-range-select" style="margin-left:8px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;cursor:pointer">
+                    <option value="3600000">Last 1h</option>
+                    <option value="21600000">Last 6h</option>
+                    <option value="86400000">Last 24h</option>
+                    <option value="0">All time</option>
+                </select>
+            </div>
+            <div class="raw-events-table">
+                ${rawRows ? `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Tool</th>
+                            <th>Phase</th>
+                            <th class="num">Tokens</th>
+                            <th class="num">Cost</th>
+                            <th>Time</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rawRows}</tbody>
+                </table>` : '<div style="padding:12px;color:var(--text-dim)">No events.</div>'}
+            </div>
+            ` : `
+            <details>
                 <summary>
                     Raw events (${rawEvents.length})
                     <select id="events-range-select" style="margin-left:8px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;cursor:pointer">
@@ -350,10 +376,11 @@ function renderDetail(session) {
                     </table>` : '<div style="padding:12px;color:var(--text-dim)">No events.</div>'}
                 </div>
             </details>
+            `}
         </div>
     `;
 
-    // Restore <details> open state (wide screens always open; narrow screens restore prior state)
+    // Restore <details> open state (narrow screens only — wide screens use plain div)
     if (!wide && rawEventsOpen) {
         const detailsEl = detail.querySelector('details');
         if (detailsEl) detailsEl.open = true;
