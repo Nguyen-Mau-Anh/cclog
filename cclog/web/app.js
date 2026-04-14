@@ -219,9 +219,9 @@ function renderDetail(session) {
     // ── Raw events (filtered by time range) ──
     const cutoff = eventsTimeRange ? Date.now() - eventsTimeRange : 0;
     const rawEvents = events.filter(ev => !eventsTimeRange || (ev.occurred_at || 0) >= cutoff).reverse();
-    const rawRows = rawEvents.map((ev, i) => {
+    const rawRows = rawEvents.map((ev) => {
         const tokens = (ev.gross_input || 0) + (ev.gross_output || 0);
-        const expandId = `ev-json-${i}`;
+        const expandId = `ev-json-${ev.id}`;
         return `
             <tr class="ev-row ev-expandable" data-ev-id="${ev.id}" data-ev-idx="${i}">
                 <td>
