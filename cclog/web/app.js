@@ -497,9 +497,13 @@ async function fetchSessions() {
     try {
         const resp = await fetch('/api/sessions');
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        sessions = await resp.json();
+        const data = await resp.json();
+        // Tab may have switched while the request was in-flight; discard if Search
+        if (activeTab === 'search') return;
+        sessions = data;
     } catch (err) {
         console.error('Failed to fetch sessions:', err);
+        return;
     }
     renderSessionList();
 }
