@@ -192,10 +192,14 @@ async function selectSession(id) {
     }
 }
 
+function isWideScreen() {
+    return window.matchMedia('(min-width: 1100px)').matches;
+}
+
 function renderDetail(session) {
     const detail = document.getElementById('detail-panel');
     const rawEventsOpen = detail.querySelector('details')?.open ?? false;
-    const scrollTop = detail.scrollTop;
+    const scrollTop = (detail.querySelector('.detail-left') || detail).scrollTop;
     const rawTableScrollTop = detail.querySelector('.raw-events-table')?.scrollTop ?? 0;
 
     // Save which event JSON rows are expanded and their pre scroll positions
@@ -267,7 +271,9 @@ function renderDetail(session) {
         ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;font-family:monospace">${escapeHtml(cwdPath)}</div>`
         : '';
 
+    const wide = isWideScreen();
     detail.innerHTML = `
+        ${wide ? '<div class="detail-left">' : ''}
         <div class="detail-header">
             <button id="back-btn" type="button">&#8592; Back</button>
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
@@ -315,9 +321,10 @@ function renderDetail(session) {
                 <tbody>${toolRows}</tbody>
             </table>` : '<div style="color:var(--text-dim);font-size:13px">No tool events recorded.</div>'}
         </div>
+        ${wide ? '</div>' : ''}
 
         <div class="raw-events-section">
-            <details>
+            <details ${wide ? 'open' : ''}>
                 <summary>
                     Raw events (${rawEvents.length})
                     <select id="events-range-select" style="margin-left:8px;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:2px 6px;font-size:12px;cursor:pointer">
@@ -346,8 +353,8 @@ function renderDetail(session) {
         </div>
     `;
 
-    // Restore <details> open state (lost when innerHTML is replaced)
-    if (rawEventsOpen) {
+    // Restore <details> open state (wide screens always open; narrow screens restore prior state)
+    if (!wide && rawEventsOpen) {
         const detailsEl = detail.querySelector('details');
         if (detailsEl) detailsEl.open = true;
     }
@@ -431,7 +438,8 @@ function renderDetail(session) {
     }
 
     // Restore scroll positions after re-render
-    detail.scrollTop = scrollTop;
+    const leftCol = detail.querySelector('.detail-left') || detail;
+    leftCol.scrollTop = scrollTop;
     const rawTable = detail.querySelector('.raw-events-table');
     if (rawTable) rawTable.scrollTop = rawTableScrollTop;
 }
