@@ -4,6 +4,7 @@
 
 let sessions = [];
 let selectedSessionId = null;
+let _detailReqId = 0; // incremented on every selectSession; stale fetches self-discard
 let searchQuery = '';
 let statusFilter = 'all'; // 'all' | 'active' | 'active_idle'
 let eventsTimeRange = 3_600_000; // ms; 0 = all time
@@ -168,6 +169,7 @@ function renderSessionList() {
 
 async function selectSession(id) {
     selectedSessionId = id;
+    const reqId = ++_detailReqId;
     renderSessionList(); // update selection highlight
 
     // Mobile: switch to detail view
@@ -182,8 +184,10 @@ async function selectSession(id) {
         const resp = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
+        if (_detailReqId !== reqId) return; // user clicked another session while fetching
         renderDetail(data);
     } catch (err) {
+        if (_detailReqId !== reqId) return;
         detail.innerHTML = `<div class="detail-placeholder"><div style="color:var(--danger)">Failed to load session: ${escapeHtml(String(err))}</div></div>`;
     }
 }
@@ -444,6 +448,8 @@ async function refreshDetailSilent(id) {
         const resp = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
         if (!resp.ok) return;
         const data = await resp.json();
+        // Discard if user switched sessions while this fetch was in flight
+        if (selectedSessionId !== id) return;
         renderDetail(data);
     } catch (err) {
         // silently ignore — panel keeps showing last known data
