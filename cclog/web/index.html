@@ -65,6 +65,33 @@
       letter-spacing: 0.05em;
     }
 
+    /* ── Tab bar ────────────────────────────────────────── */
+
+    .tab-bar {
+      display: flex;
+      gap: 2px;
+      background: var(--bg);
+      border-radius: 6px;
+      padding: 2px;
+    }
+
+    .tab-btn {
+      padding: 4px 14px;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      background: transparent;
+      color: var(--text-muted);
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .tab-btn.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
     .active-count {
       font-size: 13px;
       color: var(--text-muted);
@@ -148,6 +175,65 @@
       border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
+
+    /* ── Search time bar ────────────────────────────────── */
+
+    #search-time-bar {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      background: var(--bg-panel);
+    }
+
+    .preset-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 6px;
+    }
+
+    .preset-btn {
+      padding: 3px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--text-muted);
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .preset-btn.active {
+      border-color: var(--accent-light);
+      color: var(--accent-light);
+      background: rgba(124, 58, 237, 0.15);
+    }
+
+    .custom-range-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 4px;
+    }
+
+    .custom-range-row input[type="datetime-local"] {
+      width: 100%;
+      font-size: 12px;
+      padding: 4px 6px;
+    }
+
+    .search-apply-btn {
+      margin-top: 4px;
+      width: 100%;
+      padding: 5px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .search-apply-btn:hover { background: var(--accent-light); }
 
     #session-list {
       flex: 1;
@@ -578,6 +664,10 @@
   <div class="app">
     <header>
       <span class="logo">cclog</span>
+      <div class="tab-bar">
+        <button class="tab-btn active" id="tab-live">Live</button>
+        <button class="tab-btn" id="tab-search">Search</button>
+      </div>
       <span class="active-count" id="active-count">
         <span class="dot">●</span> <span id="active-count-num">0</span> active sessions
       </span>
@@ -602,7 +692,22 @@
 
     <div class="content">
       <aside class="sessions-panel">
-        <div class="sessions-panel-header">Sessions</div>
+        <div class="sessions-panel-header" id="sessions-panel-title">Sessions</div>
+        <div id="search-time-bar" style="display:none">
+          <div class="preset-row">
+            <button class="preset-btn" data-preset="900000">15m</button>
+            <button class="preset-btn active" data-preset="3600000">1h</button>
+            <button class="preset-btn" data-preset="21600000">6h</button>
+            <button class="preset-btn" data-preset="86400000">24h</button>
+            <button class="preset-btn" data-preset="604800000">7d</button>
+            <button class="preset-btn" data-preset="custom">Custom</button>
+          </div>
+          <div class="custom-range-row" id="custom-range-inputs" style="display:none">
+            <input type="datetime-local" id="search-from-input" placeholder="From">
+            <input type="datetime-local" id="search-to-input" placeholder="To">
+            <button class="search-apply-btn" id="search-apply-btn">Apply</button>
+          </div>
+        </div>
         <div id="session-list"></div>
       </aside>
 

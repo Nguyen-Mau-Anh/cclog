@@ -9,6 +9,12 @@ let statusFilter = 'all'; // 'all' | 'active' | 'active_idle'
 let eventsTimeRange = 3_600_000; // ms; 0 = all time
 const eventJsonCache = new Map(); // evId → {input_json, output_json}
 
+// ── Tab state ─────────────────────────────────────────────────────────────
+let activeTab = 'live'; // 'live' | 'search'
+let searchPresetMs = 3_600_000; // preset duration in ms; 0 = custom
+let searchFrom = null; // ms timestamp (custom range start)
+let searchTo = null;   // ms timestamp (custom range end)
+
 // ── Helper functions ──────────────────────────────────────────────────────
 
 function formatCost(usd) {
@@ -74,14 +80,28 @@ function updateAllTimestamps() {
 
 function filteredSessions() {
     return sessions.filter(s => {
-        // Status filter
-        if (statusFilter === 'active' && s.status !== 'active') return false;
-        if (statusFilter === 'active_idle' && s.status === 'closed') return false;
+        // Status filter (Live mode only)
+        if (activeTab === 'live') {
+            if (statusFilter === 'active' && s.status !== 'active') return false;
+            if (statusFilter === 'active_idle' && s.status === 'closed') return false;
+        }
 
         // Search filter
         if (searchQuery) {
             const cwd = (s.cwd || '').toLowerCase();
             if (!cwd.includes(searchQuery)) return false;
+        }
+
+        // Date range filter (Search mode)
+        if (activeTab === 'search') {
+            const t = s.last_active || s.started_at;
+            if (!t) return false;
+            if (searchPresetMs > 0) {
+                if (t < Date.now() - searchPresetMs) return false;
+            } else {
+                if (searchFrom && t < searchFrom) return false;
+                if (searchTo   && t > searchTo)   return false;
+            }
         }
 
         return true;
@@ -402,6 +422,8 @@ function renderDetail(session) {
 // ── Silent detail refresh (no loading flash) ──────────────────────────────
 
 async function refreshDetailSilent(id) {
+    // Never auto-refresh in Search mode — user is reading
+    if (activeTab === 'search') return;
     // Skip re-render while user is interacting with any dropdown in the detail panel
     if (document.activeElement && document.activeElement.closest('#detail-panel')) return;
     // Re-fetch and re-render detail WITHOUT clearing the panel first
@@ -439,11 +461,11 @@ function connectSSE() {
     };
 
     evtSource.onmessage = async (e) => {
+        if (activeTab === 'search') return; // frozen in Search mode
         try {
             const data = JSON.parse(e.data);
             if (data.type === 'session_update') {
                 await fetchSessions();
-                // If detail panel is showing this session, refresh it
                 if (selectedSessionId === data.session_id) {
                     refreshDetailSilent(data.session_id);
                 }
@@ -488,10 +510,82 @@ function escapeAttr(str) {
 
 // ── Init ──────────────────────────────────────────────────────────────────
 
+// ── Tab switching ─────────────────────────────────────────────────────────
+
+function switchTab(tab) {
+    activeTab = tab;
+
+    document.getElementById('tab-live').classList.toggle('active', tab === 'live');
+    document.getElementById('tab-search').classList.toggle('active', tab === 'search');
+
+    const timeBar = document.getElementById('search-time-bar');
+    const controls = document.querySelector('.header-controls');
+    const activeCountEl = document.getElementById('active-count');
+    const panelTitle = document.getElementById('sessions-panel-title');
+
+    if (tab === 'search') {
+        timeBar.style.display = '';
+        controls.style.display = 'none';
+        activeCountEl.style.display = 'none';
+        panelTitle.textContent = 'Search results';
+        // Snapshot current sessions filtered by selected range
+        renderSessionList();
+        // Clear detail panel — stale live data shouldn't persist
+        if (!selectedSessionId) {
+            document.getElementById('detail-panel').innerHTML = `
+                <div class="detail-placeholder">
+                    <div class="big-icon">◫</div>
+                    <div>Select a session to inspect</div>
+                </div>`;
+        }
+    } else {
+        timeBar.style.display = 'none';
+        controls.style.display = '';
+        activeCountEl.style.display = '';
+        panelTitle.textContent = 'Sessions';
+        fetchSessions();
+    }
+}
+
+// ── Search time bar wiring ────────────────────────────────────────────────
+
+document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const val = btn.dataset.preset;
+        const customRow = document.getElementById('custom-range-inputs');
+        if (val === 'custom') {
+            searchPresetMs = 0;
+            customRow.style.display = '';
+        } else {
+            searchPresetMs = parseInt(val, 10);
+            customRow.style.display = 'none';
+            searchFrom = null;
+            searchTo = null;
+            renderSessionList();
+        }
+    });
+});
+
+document.getElementById('search-apply-btn').addEventListener('click', () => {
+    const fromVal = document.getElementById('search-from-input').value;
+    const toVal   = document.getElementById('search-to-input').value;
+    searchFrom = fromVal ? new Date(fromVal).getTime() : null;
+    searchTo   = toVal   ? new Date(toVal).getTime()   : null;
+    renderSessionList();
+});
+
+document.getElementById('tab-live').addEventListener('click', () => switchTab('live'));
+document.getElementById('tab-search').addEventListener('click', () => switchTab('search'));
+
+// ── Init ──────────────────────────────────────────────────────────────────
+
 fetchSessions();
 connectSSE();
 setInterval(updateAllTimestamps, 1_000);
 setInterval(async () => {
+    if (activeTab === 'search') return; // frozen in Search mode
     await fetchSessions();
     if (selectedSessionId) {
         refreshDetailSilent(selectedSessionId);
