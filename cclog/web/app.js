@@ -14,6 +14,8 @@ let activeTab = 'live'; // 'live' | 'search'
 let searchPresetMs = 3_600_000; // preset duration in ms; 0 = custom
 let searchFrom = null; // ms timestamp (custom range start)
 let searchTo = null;   // ms timestamp (custom range end)
+let searchSessions = null;  // frozen snapshot used in Search mode; null = not yet taken
+let searchSnapshotTime = null; // Date.now() at snapshot time
 
 // ── Helper functions ──────────────────────────────────────────────────────
 
@@ -79,7 +81,9 @@ function updateAllTimestamps() {
 // ── Session list rendering ────────────────────────────────────────────────
 
 function filteredSessions() {
-    return sessions.filter(s => {
+    const pool = (activeTab === 'search' && searchSessions !== null) ? searchSessions : sessions;
+
+    return pool.filter(s => {
         // Status filter (Live mode only)
         if (activeTab === 'live') {
             if (statusFilter === 'active' && s.status !== 'active') return false;
@@ -92,20 +96,29 @@ function filteredSessions() {
             if (!cwd.includes(searchQuery)) return false;
         }
 
-        // Date range filter (Search mode)
-        if (activeTab === 'search') {
-            const t = s.last_active || s.started_at;
-            if (!t) return false;
-            if (searchPresetMs > 0) {
-                if (t < Date.now() - searchPresetMs) return false;
-            } else {
-                if (searchFrom && t < searchFrom) return false;
-                if (searchTo   && t > searchTo)   return false;
-            }
-        }
-
         return true;
     });
+}
+
+// Take a frozen snapshot of sessions filtered by the current search range
+function applySearch() {
+    const now = searchSnapshotTime = Date.now();
+    let from, to;
+    if (searchPresetMs > 0) {
+        from = now - searchPresetMs;
+        to = now;
+    } else {
+        from = searchFrom;
+        to = searchTo;
+    }
+    searchSessions = sessions.filter(s => {
+        const t = s.last_active || s.started_at;
+        if (!t) return false;
+        if (from && t < from) return false;
+        if (to   && t > to)   return false;
+        return true;
+    });
+    renderSessionList();
 }
 
 function renderSessionList() {
@@ -528,17 +541,16 @@ function switchTab(tab) {
         controls.style.display = 'none';
         activeCountEl.style.display = 'none';
         panelTitle.textContent = 'Search results';
-        // Snapshot current sessions filtered by selected range
-        renderSessionList();
-        // Clear detail panel — stale live data shouldn't persist
-        if (!selectedSessionId) {
-            document.getElementById('detail-panel').innerHTML = `
-                <div class="detail-placeholder">
-                    <div class="big-icon">◫</div>
-                    <div>Select a session to inspect</div>
-                </div>`;
-        }
+        selectedSessionId = null;
+        document.getElementById('detail-panel').innerHTML = `
+            <div class="detail-placeholder">
+                <div class="big-icon">◫</div>
+                <div>Select a session to inspect</div>
+            </div>`;
+        applySearch(); // freeze a snapshot immediately
     } else {
+        searchSessions = null;
+        searchSnapshotTime = null;
         timeBar.style.display = 'none';
         controls.style.display = '';
         activeCountEl.style.display = '';
@@ -563,7 +575,7 @@ document.querySelectorAll('.preset-btn').forEach(btn => {
             customRow.style.display = 'none';
             searchFrom = null;
             searchTo = null;
-            renderSessionList();
+            applySearch();
         }
     });
 });
@@ -573,7 +585,7 @@ document.getElementById('search-apply-btn').addEventListener('click', () => {
     const toVal   = document.getElementById('search-to-input').value;
     searchFrom = fromVal ? new Date(fromVal).getTime() : null;
     searchTo   = toVal   ? new Date(toVal).getTime()   : null;
-    renderSessionList();
+    applySearch();
 });
 
 document.getElementById('tab-live').addEventListener('click', () => switchTab('live'));
