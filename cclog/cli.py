@@ -448,6 +448,74 @@ def cmd_prune(args) -> None:
         conn.close()
 
 
+def cmd_install_hooks(args) -> None:
+    import json
+
+    settings_path = Path.home() / ".claude" / "settings.json"
+
+    # Load existing settings or start fresh
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except Exception as e:
+            _console.print(f"[red]Could not parse {settings_path}: {e}[/red]")
+            sys.exit(1)
+    else:
+        settings = {}
+
+    if not isinstance(settings, dict):
+        _console.print(f"[red]{settings_path} is not a JSON object[/red]")
+        sys.exit(1)
+
+    hooks_root = settings.setdefault("hooks", {})
+
+    # Each entry: (event_name, hook_command, timeout)
+    _HOOKS = [
+        ("PreToolUse",  "python3 -m cclog.hook pre",  3),
+        ("PostToolUse", "python3 -m cclog.hook post", 3),
+        ("Stop",        "python3 -m cclog.hook stop", 5),
+    ]
+
+    added = []
+    already = []
+
+    for event, command, timeout in _HOOKS:
+        entries = hooks_root.setdefault(event, [])
+
+        # Idempotency: skip if any existing hook already calls cclog.hook
+        already_installed = any(
+            h.get("command", "").strip().startswith("python3 -m cclog.hook")
+            for entry in entries
+            for h in entry.get("hooks", [])
+        )
+
+        if already_installed:
+            already.append(event)
+            continue
+
+        entries.append({
+            "matcher": "",
+            "hooks": [{"type": "command", "command": command, "timeout": timeout}],
+        })
+        added.append(event)
+
+    if not added and not already:
+        _console.print("[yellow]No changes made.[/yellow]")
+        return
+
+    if already:
+        _console.print(f"Already installed: {', '.join(already)}")
+
+    if added:
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+        _console.print(f"[green]Added cclog hooks for: {', '.join(added)}[/green]")
+        _console.print(f"Saved to {settings_path}")
+        _console.print("Restart Claude Code for the hooks to take effect.")
+    else:
+        _console.print("[green]cclog hooks are already installed.[/green]")
+
+
 def cmd_query(args) -> None:
     sql = args.sql
     db = _db_path()
@@ -514,6 +582,11 @@ def main() -> None:
     p_prune.add_argument("--dry-run", action="store_true", help="Show what would be removed")
     p_prune.add_argument("--no-vacuum", action="store_true", help="Skip VACUUM after pruning")
 
+    sub.add_parser(
+        "install-hooks",
+        help="Install cclog hooks into ~/.claude/settings.json (idempotent)",
+    )
+
     args = parser.parse_args()
 
     commands = {
@@ -526,6 +599,7 @@ def main() -> None:
         "query": cmd_query,
         "backfill": cmd_backfill,
         "prune": cmd_prune,
+        "install-hooks": cmd_install_hooks,
     }
 
     if args.command is None:

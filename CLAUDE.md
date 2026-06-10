@@ -36,6 +36,9 @@ cclog query "SELECT * FROM sessions"
 # Retention: strip request/response JSON from old events (event rows and
 # token_ledger always kept, so cost history survives pruning)
 cclog prune --days 30 [--dry-run] [--no-vacuum]
+
+# Wire cclog hooks into ~/.claude/settings.json (idempotent — safe to re-run)
+cclog install-hooks
 ```
 
 ## Architecture

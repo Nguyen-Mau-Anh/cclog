@@ -537,13 +537,46 @@ details[open] summary {
   min-width: 220px;
 }
 
+.ev-json-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
 .ev-json-label {
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: .05em;
   color: var(--text-dim);
-  margin-bottom: 4px;
+}
+
+.ev-json-copy {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  padding: 1px 6px;
+  cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
+}
+
+.ev-json-copy:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+.ev-json-copy--copied {
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.ev-json-copy--error {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .ev-json-pre {
@@ -570,6 +603,14 @@ details[open] summary {
 .ev-json-msg.error {
   color: var(--danger);
 }
+
+/* ── JSON syntax highlight ───────────────────────────── */
+
+.json-key  { color: #7dd3fc; }   /* sky blue  — object keys  */
+.json-str  { color: #86efac; }   /* green     — string values */
+.json-num  { color: #fca5a5; }   /* rose      — numbers */
+.json-bool { color: #fdba74; }   /* orange    — true / false */
+.json-null { color: #94a3b8; }   /* slate     — null */
 
 .monospace {
   font-family: 'Cascadia Code', 'Fira Code', monospace;
