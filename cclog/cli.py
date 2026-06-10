@@ -379,6 +379,75 @@ def cmd_backfill(args) -> None:
     _console.print(f"Backfilled {filled} sessions, skipped {skipped}.")
 
 
+def cmd_prune(args) -> None:
+    from cclog.db import get_db
+    from cclog.prune import (
+        measure_prunable,
+        retention_days_from_env,
+        strip_old_event_json,
+        vacuum,
+    )
+
+    # --days default resolves lazily: env (parsed tolerantly) or 30. An
+    # invalid CCLOG_RETENTION_DAYS must never crash the CLI.
+    days = args.days if args.days is not None else (retention_days_from_env() or 30)
+    if days <= 0:
+        _console.print("[red]--days must be a positive integer[/red]")
+        sys.exit(1)
+
+    cutoff_ms = int(time.time() * 1000) - days * 86400 * 1000
+
+    if not args.dry_run and _is_daemon_running():
+        _console.print(
+            "[yellow]Daemon is running — pruning may briefly block it, and a busy "
+            "daemon can make this command fail. For routine cleanup prefer setting "
+            "CCLOG_RETENTION_DAYS so the daemon prunes itself.[/yellow]"
+        )
+
+    try:
+        conn = get_db(_db_path())
+    except Exception as e:
+        _console.print(f"[red]Error opening database: {e}[/red]")
+        sys.exit(1)
+
+    try:
+        if args.dry_run:
+            result = measure_prunable(conn, cutoff_ms)
+            _console.print(
+                f"Would strip request/response JSON from {result.events_stripped} "
+                f"event(s) older than {days} day(s), freeing ~{result.bytes_freed / 1024 / 1024:.2f} MB. "
+                "(Token counts and costs are always kept.)"
+            )
+            return
+
+        result = strip_old_event_json(conn, cutoff_ms)
+        if result.events_stripped == 0:
+            _console.print(f"Nothing to prune (no event JSON older than {days} day(s)).")
+            return
+
+        if not args.no_vacuum:
+            try:
+                vacuum(conn)
+            except sqlite3.OperationalError as e:
+                _console.print(
+                    f"[yellow]Pruned, but VACUUM failed ({e}) — likely the daemon is busy. "
+                    "Space will be reclaimed on a later prune.[/yellow]"
+                )
+        _console.print(
+            f"Stripped JSON from {result.events_stripped} event(s) older than {days} day(s), "
+            f"freed ~{result.bytes_freed / 1024 / 1024:.2f} MB. Token counts and costs kept."
+        )
+    except sqlite3.OperationalError as e:
+        _console.print(
+            f"[red]Prune failed ({e}) — the database is busy. Stop the daemon "
+            "(cclog stop) and retry, or set CCLOG_RETENTION_DAYS to let the "
+            "daemon prune itself.[/red]"
+        )
+        sys.exit(1)
+    finally:
+        conn.close()
+
+
 def cmd_query(args) -> None:
     sql = args.sql
     db = _db_path()
@@ -432,6 +501,19 @@ def main() -> None:
 
     sub.add_parser("backfill", help="Backfill JSONL token data for all sessions")
 
+    p_prune = sub.add_parser(
+        "prune",
+        help="Strip request/response JSON from old events (keeps token counts and costs)",
+    )
+    p_prune.add_argument(
+        "--days",
+        type=int,
+        default=None,  # resolved in cmd_prune: CCLOG_RETENTION_DAYS or 30
+        help="Strip JSON from events older than this many days (default: CCLOG_RETENTION_DAYS or 30)",
+    )
+    p_prune.add_argument("--dry-run", action="store_true", help="Show what would be removed")
+    p_prune.add_argument("--no-vacuum", action="store_true", help="Skip VACUUM after pruning")
+
     args = parser.parse_args()
 
     commands = {
@@ -443,6 +525,7 @@ def main() -> None:
         "sessions": cmd_sessions,
         "query": cmd_query,
         "backfill": cmd_backfill,
+        "prune": cmd_prune,
     }
 
     if args.command is None:

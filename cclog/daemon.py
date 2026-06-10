@@ -41,6 +41,20 @@ def _idle_minutes() -> int:
     return int(os.environ.get("CCLOG_IDLE_MINUTES") or 5)
 
 
+def _retention_days() -> Optional[int]:
+    """Days to keep event request/response JSON, or None to keep forever."""
+    from cclog.prune import retention_days_from_env
+    return retention_days_from_env()
+
+
+_PRUNE_INTERVAL_MS = 24 * 3600 * 1000  # prune at most once a day
+
+# VACUUM rewrites the whole file (cost ~ total DB size, not bytes freed) while
+# holding _db_lock, stalling all requests and writes. Only pay that when the
+# prune actually freed enough to matter.
+_VACUUM_THRESHOLD_BYTES = 50 * 1024 * 1024
+
+
 _MINIMAL_HTML = """<!DOCTYPE html>
 <html><head><title>cclog</title></head>
 <body>
@@ -112,6 +126,7 @@ class CclogDaemon:
         self._http_server: Optional[HTTPServer] = None
         self._socket_thread: Optional[threading.Thread] = None
         self._server_socket: Optional[socket.socket] = None
+        self._last_prune_ms = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -131,6 +146,10 @@ class CclogDaemon:
             target=self._run_socket_listener, daemon=True
         )
         self._socket_thread.start()
+
+        # Daily retention prune (only if CCLOG_RETENTION_DAYS is set)
+        if _retention_days():
+            threading.Thread(target=self._run_retention_loop, daemon=True).start()
 
         # Start HTTP server (blocks until stop())
         self._start_http_server()
@@ -403,6 +422,52 @@ class CclogDaemon:
 
         # Broadcast SSE so dashboard refreshes
         self._broadcast_sse_dict({"type": "session_update", "session_id": session_id})
+
+    # ------------------------------------------------------------------
+    # Retention pruning
+    # ------------------------------------------------------------------
+
+    def _run_retention_loop(self) -> None:
+        while self._running:
+            try:
+                self._prune_if_due()
+            except Exception:
+                pass  # never let retention kill the daemon
+            for _ in range(60):  # re-check roughly every minute
+                if not self._running:
+                    return
+                time.sleep(1.0)
+
+    def _prune_if_due(self, now_ms: Optional[int] = None):
+        """Strip JSON blobs from events older than CCLOG_RETENTION_DAYS,
+        at most once per _PRUNE_INTERVAL_MS. Returns the PruneResult, or
+        None if retention is off or the prune isn't due yet."""
+        from cclog.db import get_db
+        from cclog.prune import strip_old_event_json, vacuum
+
+        days = _retention_days()
+        if not days:
+            return None
+        if now_ms is None:
+            now_ms = int(time.time() * 1000)
+        if self._last_prune_ms and now_ms - self._last_prune_ms < _PRUNE_INTERVAL_MS:
+            return None
+
+        # Mark attempted up front: a persistently failing prune should wait
+        # for the next daily window, not hammer a heavyweight op every 60s.
+        self._last_prune_ms = now_ms
+
+        cutoff_ms = now_ms - days * 86400 * 1000
+        with self._db_lock:
+            conn = get_db(self.db_path)
+            try:
+                result = strip_old_event_json(conn, cutoff_ms)
+                if result.bytes_freed >= _VACUUM_THRESHOLD_BYTES:
+                    vacuum(conn)
+            finally:
+                conn.close()
+
+        return result
 
     # ------------------------------------------------------------------
     # SSE broadcasting

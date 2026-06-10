@@ -32,6 +32,10 @@ cclog status
 cclog today
 cclog sessions [--all]
 cclog query "SELECT * FROM sessions"
+
+# Retention: strip request/response JSON from old events (event rows and
+# token_ledger always kept, so cost history survives pruning)
+cclog prune --days 30 [--dry-run] [--no-vacuum]
 ```
 
 ## Architecture
@@ -66,7 +70,8 @@ cclog/hook.py  ← reads JSON payload from stdin
 | `cclog/daemon.py` | Persistent process: Unix socket listener + SQLite writer + HTTP server + SSE broadcaster |
 | `cclog/tokens.py` | Three-tier token counting: `api` (from payload) → `tiktoken` (BPE estimate) → `heuristic` (len//4) |
 | `cclog/pricing.py` | Static model price table (USD per 1M tokens); optional YAML override at `~/.cclog/pricing.yaml` |
-| `cclog/cli.py` | argparse CLI: `start/stop/status/dashboard/today/sessions/query` |
+| `cclog/cli.py` | argparse CLI: `start/stop/status/dashboard/today/sessions/query/backfill/prune` |
+| `cclog/prune.py` | Two-tier retention: strips old event JSON blobs, keeps event rows + ledger |
 | `cclog/web/dist/` | Built React dashboard (generated — never edit by hand); served by daemon |
 | `web/` | Dashboard source: React 18 + Vite + TanStack Query. `cd web && npm run build` regenerates `cclog/web/dist/` (checked into git so `pip install` needs no Node) |
 
@@ -139,6 +144,7 @@ The hook receives a JSON object from Claude Code on stdin. All fields are option
 | `CCLOG_PORT` | `7331` | Daemon HTTP port |
 | `CCLOG_SESSION_TIMEOUT_MINUTES` | `30` | Inactivity before session marked closed |
 | `CCLOG_IDLE_MINUTES` | `5` | Inactivity before session marked idle |
+| `CCLOG_RETENTION_DAYS` | — | If set (>0), daemon strips event request/response JSON older than N days, daily. Also the default for `cclog prune --days`. The daemon only VACUUMs when a prune frees ≥50 MB (VACUUM rewrites the whole file under the DB lock); freed pages are reused by SQLite either way. Invalid values are ignored. |
 | `CLAUDE_SESSION_NAME` | — | Human-readable session name (set per-project) |
 
 ### Schema migrations
