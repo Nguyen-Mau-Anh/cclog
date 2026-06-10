@@ -20,6 +20,9 @@ python3 -m pytest tests/test_hook.py::test_hook_sends_to_daemon_when_socket_exis
 # Run with coverage
 python3 -m pytest tests/ --cov=cclog --cov-report=term-missing
 
+# Dev mode: daemon (BE) + Vite with hot reload (FE) in one command; Ctrl-C stops both
+./dev.sh           # BE http://127.0.0.1:7331, FE http://localhost:5173 (proxies /api,/events)
+
 # Daemon lifecycle
 cclog start        # starts daemon, opens browser
 cclog stop
