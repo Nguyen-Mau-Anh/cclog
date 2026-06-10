@@ -448,48 +448,58 @@ def cmd_prune(args) -> None:
         conn.close()
 
 
-def _find_cclog_python() -> str:
-    """Return the absolute path of a Python interpreter that can import cclog.
+def _hook_command_prefix() -> str:
+    """Return the command prefix used in hook entries: either the installed
+    'cclog' script (preferred — shebang is baked in at install time and works
+    on every OS) or a full 'python -m cclog.hook' fallback using the exact
+    interpreter that is currently running the CLI.
 
-    Claude Code resolves bare 'python3' to the Xcode stub which may not have
-    cclog on its sys.path. We probe candidates in preference order and return
-    the first one that successfully imports the package."""
-    import subprocess
+    Never returns bare 'python3' — that resolves differently per platform and
+    Claude Code's hook runner may use a different PATH than the terminal."""
+    import shutil
+    import sysconfig
 
-    candidates = [
-        sys.executable,                          # running interpreter first
-        "/opt/homebrew/bin/python3",             # Homebrew default
-        "/opt/homebrew/bin/python3.13",
-        "/opt/homebrew/bin/python3.12",
-        "/opt/homebrew/bin/python3.11",
-        "/usr/local/bin/python3",
-        "/usr/bin/python3",
-    ]
-    # Deduplicate while preserving order
-    seen: set = set()
-    unique = [c for c in candidates if not (c in seen or seen.add(c))]  # type: ignore[func-returns-value]
+    is_win = sys.platform == "win32"
+    names = ["cclog.exe", "cclog"] if is_win else ["cclog"]
 
-    for py in unique:
+    # 1. Scripts dir of the Python currently running cclog (most reliable).
+    for scheme in (None, "posix_user", "nt_user"):
         try:
-            r = subprocess.run(
-                [py, "-c", "import cclog"],
-                capture_output=True, timeout=3,
+            scripts_dir = (
+                sysconfig.get_path("scripts", scheme)
+                if scheme
+                else sysconfig.get_path("scripts")
             )
-            if r.returncode == 0:
-                return py
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except (KeyError, TypeError):
             continue
+        if scripts_dir:
+            for name in names:
+                candidate = os.path.join(scripts_dir, name)
+                if os.path.isfile(candidate):
+                    return candidate  # caller appends " hook <phase>"
 
-    # Fallback: use sys.executable even if cclog wasn't found there
-    return sys.executable
+    # 2. Anything named 'cclog' on PATH.
+    found = shutil.which("cclog")
+    if found:
+        return found
+
+    # 3. No cclog script found — fall back to the explicit Python path so we
+    #    skip the platform shim and load the same site-packages as the CLI.
+    return f"{sys.executable} -m cclog.hook"
+
+
+def _hook_command(phase: str) -> str:
+    """Full hook command string for one phase (pre / post / stop)."""
+    prefix = _hook_command_prefix()
+    # cclog script:  "cclog hook pre"
+    # python module: "/path/python -m cclog.hook pre"
+    if prefix.endswith("cclog.hook"):
+        return f"{prefix} {phase}"
+    return f"{prefix} hook {phase}"
 
 
 def cmd_install_hooks(args) -> None:
     import json
-
-    # Probe for the Python that actually has cclog — avoids the Xcode stub
-    # that Claude Code resolves bare "python3" to on macOS.
-    python = _find_cclog_python()
 
     settings_path = Path.home() / ".claude" / "settings.json"
 
@@ -509,9 +519,9 @@ def cmd_install_hooks(args) -> None:
     hooks_root = settings.setdefault("hooks", {})
 
     _HOOKS = [
-        ("PreToolUse",  f"{python} -m cclog.hook pre",  3),
-        ("PostToolUse", f"{python} -m cclog.hook post", 3),
-        ("Stop",        f"{python} -m cclog.hook stop", 5),
+        ("PreToolUse",  _hook_command("pre"),  3),
+        ("PostToolUse", _hook_command("post"), 3),
+        ("Stop",        _hook_command("stop"), 5),
     ]
 
     added = []
@@ -521,12 +531,14 @@ def cmd_install_hooks(args) -> None:
     for event, command, timeout in _HOOKS:
         entries = hooks_root.setdefault(event, [])
 
-        # Find any existing cclog.hook entry (may have wrong python path)
+        # Find any existing cclog hook entry — matches both the old
+        # "python -m cclog.hook" style and new "cclog hook" style.
         existing_entry = None
         existing_hook = None
         for entry in entries:
             for h in entry.get("hooks", []):
-                if "cclog.hook" in h.get("command", ""):
+                cmd = h.get("command", "")
+                if "cclog.hook" in cmd or "cclog hook" in cmd:
                     existing_entry = entry
                     existing_hook = h
                     break
@@ -556,11 +568,11 @@ def cmd_install_hooks(args) -> None:
     if already:
         _console.print(f"Already up to date: {', '.join(already)}")
     if fixed:
-        _console.print(f"[green]Fixed python path for: {', '.join(fixed)}[/green]")
+        _console.print(f"[green]Fixed hook command for: {', '.join(fixed)}[/green]")
     if added:
         _console.print(f"[green]Added hooks for: {', '.join(added)}[/green]")
     if changed:
-        _console.print(f"Using: {python}")
+        _console.print(f"Using: {_hook_command('pre')}")
         _console.print(f"Saved to {settings_path}")
         _console.print("Restart Claude Code for the hooks to take effect.")
     else:
@@ -638,7 +650,14 @@ def main() -> None:
         help="Install cclog hooks into ~/.claude/settings.json (idempotent)",
     )
 
+    p_hook = sub.add_parser("hook", help="Invoke a hook phase (called by Claude Code hooks)")
+    p_hook.add_argument("phase", choices=["pre", "post", "stop"])
+
     args = parser.parse_args()
+
+    def cmd_hook(args):
+        from cclog.hook import main as hook_main
+        hook_main(args.phase)
 
     commands = {
         "start": cmd_start,
@@ -651,6 +670,7 @@ def main() -> None:
         "backfill": cmd_backfill,
         "prune": cmd_prune,
         "install-hooks": cmd_install_hooks,
+        "hook": cmd_hook,
     }
 
     if args.command is None:
