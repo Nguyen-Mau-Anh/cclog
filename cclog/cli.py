@@ -448,12 +448,51 @@ def cmd_prune(args) -> None:
         conn.close()
 
 
+def _find_cclog_python() -> str:
+    """Return the absolute path of a Python interpreter that can import cclog.
+
+    Claude Code resolves bare 'python3' to the Xcode stub which may not have
+    cclog on its sys.path. We probe candidates in preference order and return
+    the first one that successfully imports the package."""
+    import subprocess
+
+    candidates = [
+        sys.executable,                          # running interpreter first
+        "/opt/homebrew/bin/python3",             # Homebrew default
+        "/opt/homebrew/bin/python3.13",
+        "/opt/homebrew/bin/python3.12",
+        "/opt/homebrew/bin/python3.11",
+        "/usr/local/bin/python3",
+        "/usr/bin/python3",
+    ]
+    # Deduplicate while preserving order
+    seen: set = set()
+    unique = [c for c in candidates if not (c in seen or seen.add(c))]  # type: ignore[func-returns-value]
+
+    for py in unique:
+        try:
+            r = subprocess.run(
+                [py, "-c", "import cclog"],
+                capture_output=True, timeout=3,
+            )
+            if r.returncode == 0:
+                return py
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+
+    # Fallback: use sys.executable even if cclog wasn't found there
+    return sys.executable
+
+
 def cmd_install_hooks(args) -> None:
     import json
 
+    # Probe for the Python that actually has cclog — avoids the Xcode stub
+    # that Claude Code resolves bare "python3" to on macOS.
+    python = _find_cclog_python()
+
     settings_path = Path.home() / ".claude" / "settings.json"
 
-    # Load existing settings or start fresh
     if settings_path.exists():
         try:
             settings = json.loads(settings_path.read_text())
@@ -469,28 +508,38 @@ def cmd_install_hooks(args) -> None:
 
     hooks_root = settings.setdefault("hooks", {})
 
-    # Each entry: (event_name, hook_command, timeout)
     _HOOKS = [
-        ("PreToolUse",  "python3 -m cclog.hook pre",  3),
-        ("PostToolUse", "python3 -m cclog.hook post", 3),
-        ("Stop",        "python3 -m cclog.hook stop", 5),
+        ("PreToolUse",  f"{python} -m cclog.hook pre",  3),
+        ("PostToolUse", f"{python} -m cclog.hook post", 3),
+        ("Stop",        f"{python} -m cclog.hook stop", 5),
     ]
 
     added = []
+    fixed = []
     already = []
 
     for event, command, timeout in _HOOKS:
         entries = hooks_root.setdefault(event, [])
 
-        # Idempotency: skip if any existing hook already calls cclog.hook
-        already_installed = any(
-            h.get("command", "").strip().startswith("python3 -m cclog.hook")
-            for entry in entries
-            for h in entry.get("hooks", [])
-        )
+        # Find any existing cclog.hook entry (may have wrong python path)
+        existing_entry = None
+        existing_hook = None
+        for entry in entries:
+            for h in entry.get("hooks", []):
+                if "cclog.hook" in h.get("command", ""):
+                    existing_entry = entry
+                    existing_hook = h
+                    break
+            if existing_hook:
+                break
 
-        if already_installed:
-            already.append(event)
+        if existing_hook is not None:
+            if existing_hook["command"] == command:
+                already.append(event)
+            else:
+                # Wrong python path — update in place
+                existing_hook["command"] = command
+                fixed.append(event)
             continue
 
         entries.append({
@@ -499,21 +548,23 @@ def cmd_install_hooks(args) -> None:
         })
         added.append(event)
 
-    if not added and not already:
-        _console.print("[yellow]No changes made.[/yellow]")
-        return
-
-    if already:
-        _console.print(f"Already installed: {', '.join(already)}")
-
-    if added:
+    changed = added + fixed
+    if changed:
         settings_path.parent.mkdir(parents=True, exist_ok=True)
         settings_path.write_text(json.dumps(settings, indent=2) + "\n")
-        _console.print(f"[green]Added cclog hooks for: {', '.join(added)}[/green]")
+
+    if already:
+        _console.print(f"Already up to date: {', '.join(already)}")
+    if fixed:
+        _console.print(f"[green]Fixed python path for: {', '.join(fixed)}[/green]")
+    if added:
+        _console.print(f"[green]Added hooks for: {', '.join(added)}[/green]")
+    if changed:
+        _console.print(f"Using: {python}")
         _console.print(f"Saved to {settings_path}")
         _console.print("Restart Claude Code for the hooks to take effect.")
     else:
-        _console.print("[green]cclog hooks are already installed.[/green]")
+        _console.print("[green]cclog hooks are already installed and up to date.[/green]")
 
 
 def cmd_query(args) -> None:
