@@ -45,7 +45,7 @@ API v2 — same HTTP server, new contract:
 |---|---|
 | `GET /api/sessions` | Unchanged (aggregate list). |
 | `GET /api/sessions/<id>` | Returns metadata + stats + `tool_breakdown` aggregated in SQL (`GROUP BY tool_name`). **No `events` array.** |
-| `GET /api/sessions/<id>/events?since=&before=&limit=` | **New.** Events ordered by `occurred_at DESC, id DESC`. `since` = inclusive lower bound (ms), `before` = exclusive upper bound (ms) for "load older" paging, `limit` default 200, max 1000. Returns `{"events": [...], "has_more": bool}` (fetch limit+1 to detect more). Served by the existing `(session_id, occurred_at)` composite index. |
+| `GET /api/sessions/<id>/events?since=&before=&before_id=&limit=` | **New.** Events ordered by `occurred_at DESC, id DESC`. `since` = inclusive lower bound (ms); `(before, before_id)` = keyset cursor on the full sort key for "load older" paging — a bare timestamp cursor would skip events sharing the boundary row's millisecond; `limit` default 200, max 1000. Returns `{"events": [...], "has_more": bool}` (fetch limit+1 to detect more). Served by the existing `(session_id, occurred_at)` composite index. |
 | `GET /api/events/<id>` | Unchanged (lazy request/response JSON). |
 | `GET /` and `/assets/*` | Serve built SPA from `cclog/web/dist/` (traversal-safe), fallback to minimal HTML if dist missing. |
 
@@ -57,6 +57,9 @@ broadcast becomes:
  "event": {"id": 1, "phase": "post", "tool_name": "Bash", "occurred_at": 123,
             "gross_input": 0, "gross_output": 0, "cost_usd": 0.0, "counted_by": "api"}}
 ```
+
+Pre-phase events carry `null` for the token/cost/counted_by fields (no ledger
+row is written for them).
 
 `jsonl_token_update` keeps emitting `{"type": "session_update", ...}`.
 

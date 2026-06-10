@@ -26,6 +26,12 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _short_sock_path() -> str:
+    """AF_UNIX paths are limited to ~104 chars on macOS; pytest tmp_path
+    routinely exceeds that. Use a short /tmp dir instead."""
+    return str(Path(tempfile.mkdtemp(prefix="cclog-", dir="/tmp")) / "cclog.sock")
+
+
 def _send_hook_event(sock_path: str, payload: dict) -> None:
     """Send a JSON hook event over a Unix socket (newline-terminated)."""
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
@@ -80,7 +86,7 @@ class _DaemonFixture:
 
 def test_daemon_writes_event_on_socket_message(tmp_path):
     """Send a JSON hook event over socket; verify event + session in DB."""
-    sock_path = str(tmp_path / "cclog.sock")
+    sock_path = _short_sock_path()
     db_path = str(tmp_path / "audit.db")
     port = _free_port()
 
@@ -117,7 +123,7 @@ def test_daemon_writes_event_on_socket_message(tmp_path):
 
 def test_daemon_writes_token_ledger_for_post_event(tmp_path):
     """Post event with usage field; verify token_ledger row written."""
-    sock_path = str(tmp_path / "cclog.sock")
+    sock_path = _short_sock_path()
     db_path = str(tmp_path / "audit.db")
     port = _free_port()
 
@@ -151,7 +157,7 @@ def test_daemon_writes_token_ledger_for_post_event(tmp_path):
 
 def test_daemon_api_sessions_returns_list(tmp_path):
     """Call GET /api/sessions; verify JSON response."""
-    sock_path = str(tmp_path / "cclog.sock")
+    sock_path = _short_sock_path()
     db_path = str(tmp_path / "audit.db")
     port = _free_port()
 
@@ -187,7 +193,7 @@ def test_daemon_api_sessions_returns_list(tmp_path):
 
 def test_daemon_api_status_returns_running(tmp_path):
     """Call GET /api/status; verify {'status': 'running', ...}."""
-    sock_path = str(tmp_path / "cclog.sock")
+    sock_path = _short_sock_path()
     db_path = str(tmp_path / "audit.db")
     port = _free_port()
 
@@ -204,7 +210,7 @@ def test_daemon_api_status_returns_running(tmp_path):
 
 def test_daemon_sse_receives_event_on_hook(tmp_path):
     """Connect to /events, send a hook event, verify SSE data arrives."""
-    sock_path = str(tmp_path / "cclog.sock")
+    sock_path = _short_sock_path()
     db_path = str(tmp_path / "audit.db")
     port = _free_port()
 
@@ -261,5 +267,12 @@ def test_daemon_sse_receives_event_on_hook(tmp_path):
     data_line = received_lines[0]
     assert data_line.startswith("data:")
     msg = json.loads(data_line[len("data:"):].strip())
-    assert msg["type"] == "session_update"
+    assert msg["type"] == "event"
     assert msg["session_id"] == "sess-sse"
+    # Event summary embedded so clients can append without refetching
+    ev = msg["event"]
+    assert ev["tool_name"] == "Edit"
+    assert ev["phase"] == "post"
+    assert ev["gross_input"] == 50
+    assert isinstance(ev["id"], int)
+    assert isinstance(ev["occurred_at"], int)

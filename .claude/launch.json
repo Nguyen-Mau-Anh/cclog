@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cclog-daemon-verify",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "CCLOG_DB=/tmp/cclog-verify/audit.db",
+        "CCLOG_SOCK=/tmp/cclog-verify/cclog.sock",
+        "CCLOG_HOST=127.0.0.1",
+        "CCLOG_PORT=7444",
+        "python3",
+        "-m",
+        "cclog.daemon"
+      ],
+      "port": 7444
+    }
+  ]
+}
