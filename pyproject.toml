@@ -22,5 +22,8 @@ cclog = "cclog.cli:main"
 where = ["."]
 include = ["cclog*"]
 
+[tool.setuptools.package-data]
+cclog = ["web/dist/**"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

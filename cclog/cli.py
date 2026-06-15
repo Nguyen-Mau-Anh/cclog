@@ -379,6 +379,245 @@ def cmd_backfill(args) -> None:
     _console.print(f"Backfilled {filled} sessions, skipped {skipped}.")
 
 
+def cmd_prune(args) -> None:
+    from cclog.db import get_db
+    from cclog.prune import (
+        measure_prunable,
+        retention_days_from_env,
+        strip_old_event_json,
+        vacuum,
+    )
+
+    # --days default resolves lazily: env (parsed tolerantly) or 30. An
+    # invalid CCLOG_RETENTION_DAYS must never crash the CLI.
+    days = args.days if args.days is not None else (retention_days_from_env() or 30)
+    if days <= 0:
+        _console.print("[red]--days must be a positive integer[/red]")
+        sys.exit(1)
+
+    cutoff_ms = int(time.time() * 1000) - days * 86400 * 1000
+
+    if not args.dry_run and _is_daemon_running():
+        _console.print(
+            "[yellow]Daemon is running — pruning may briefly block it, and a busy "
+            "daemon can make this command fail. For routine cleanup prefer setting "
+            "CCLOG_RETENTION_DAYS so the daemon prunes itself.[/yellow]"
+        )
+
+    try:
+        conn = get_db(_db_path())
+    except Exception as e:
+        _console.print(f"[red]Error opening database: {e}[/red]")
+        sys.exit(1)
+
+    try:
+        if args.dry_run:
+            result = measure_prunable(conn, cutoff_ms)
+            _console.print(
+                f"Would strip request/response JSON from {result.events_stripped} "
+                f"event(s) older than {days} day(s), freeing ~{result.bytes_freed / 1024 / 1024:.2f} MB. "
+                "(Token counts and costs are always kept.)"
+            )
+            return
+
+        result = strip_old_event_json(conn, cutoff_ms)
+        if result.events_stripped == 0:
+            _console.print(f"Nothing to prune (no event JSON older than {days} day(s)).")
+            return
+
+        if not args.no_vacuum:
+            try:
+                vacuum(conn)
+            except sqlite3.OperationalError as e:
+                _console.print(
+                    f"[yellow]Pruned, but VACUUM failed ({e}) — likely the daemon is busy. "
+                    "Space will be reclaimed on a later prune.[/yellow]"
+                )
+        _console.print(
+            f"Stripped JSON from {result.events_stripped} event(s) older than {days} day(s), "
+            f"freed ~{result.bytes_freed / 1024 / 1024:.2f} MB. Token counts and costs kept."
+        )
+    except sqlite3.OperationalError as e:
+        _console.print(
+            f"[red]Prune failed ({e}) — the database is busy. Stop the daemon "
+            "(cclog stop) and retry, or set CCLOG_RETENTION_DAYS to let the "
+            "daemon prune itself.[/red]"
+        )
+        sys.exit(1)
+    finally:
+        conn.close()
+
+
+def _probe_python(py: str) -> bool:
+    """Return True if py can import cclog in a clean environment.
+
+    Uses a minimal env (no PYTHONPATH, no VIRTUAL_ENV) to simulate the
+    stripped-down environment Claude Code uses when running hooks — a Python
+    that only works because of shell-profile side-effects will fail here."""
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX",
+                     "CONDA_DEFAULT_ENV", "PYTHONHOME")
+    }
+    try:
+        r = subprocess.run(
+            [py, "-c", "import cclog"],
+            capture_output=True, timeout=5, env=env,
+        )
+        return r.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _hook_command_prefix() -> str:
+    """Return the command prefix for hook entries.
+
+    Priority:
+    1. Installed 'cclog' script whose shebang already points to the right
+       Python (created by pip install).
+    2. First Python candidate that can import cclog in a clean environment
+       (simulates Claude Code's hook runner which strips shell-profile vars).
+
+    Never uses bare 'python3' — that resolves via PATH which differs between
+    the user's terminal and Claude Code's hook subprocess."""
+    import shutil
+    import sysconfig
+
+    is_win = sys.platform == "win32"
+    names = ["cclog.exe", "cclog"] if is_win else ["cclog"]
+
+    # 1. cclog script in the scripts dir of each candidate Python.
+    py_candidates = [
+        sys.executable,
+        "/opt/homebrew/bin/python3",
+        "/opt/homebrew/bin/python3.13",
+        "/opt/homebrew/bin/python3.12",
+        "/opt/homebrew/bin/python3.11",
+        "/usr/local/bin/python3",
+    ]
+    seen: set = set()
+    for py in py_candidates:
+        if py in seen or not os.path.isfile(py):
+            continue
+        seen.add(py)
+        try:
+            scripts_dir = subprocess.run(
+                [py, "-c", "import sysconfig; print(sysconfig.get_path('scripts'))"],
+                capture_output=True, text=True, timeout=3,
+            ).stdout.strip()
+        except Exception:
+            scripts_dir = ""
+        if scripts_dir:
+            for name in names:
+                candidate = os.path.join(scripts_dir, name)
+                if os.path.isfile(candidate):
+                    return candidate
+
+    # 2. cclog on PATH.
+    found = shutil.which("cclog")
+    if found:
+        return found
+
+    # 3. First Python that can import cclog without relying on shell env.
+    for py in py_candidates:
+        if os.path.isfile(py) and _probe_python(py):
+            return f"{py} -m cclog.hook"
+
+    # Last resort: current interpreter (may fail in Claude Code's env).
+    return f"{sys.executable} -m cclog.hook"
+
+
+def _hook_command(phase: str) -> str:
+    """Full hook command string for one phase (pre / post / stop)."""
+    prefix = _hook_command_prefix()
+    # cclog script:  "cclog hook pre"
+    # python module: "/path/python -m cclog.hook pre"
+    if prefix.endswith("cclog.hook"):
+        return f"{prefix} {phase}"
+    return f"{prefix} hook {phase}"
+
+
+def cmd_install_hooks(args) -> None:
+    import json
+
+    settings_path = Path.home() / ".claude" / "settings.json"
+
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except Exception as e:
+            _console.print(f"[red]Could not parse {settings_path}: {e}[/red]")
+            sys.exit(1)
+    else:
+        settings = {}
+
+    if not isinstance(settings, dict):
+        _console.print(f"[red]{settings_path} is not a JSON object[/red]")
+        sys.exit(1)
+
+    hooks_root = settings.setdefault("hooks", {})
+
+    _HOOKS = [
+        ("PreToolUse",  _hook_command("pre"),  3),
+        ("PostToolUse", _hook_command("post"), 3),
+        ("Stop",        _hook_command("stop"), 5),
+    ]
+
+    added = []
+    fixed = []
+    already = []
+
+    for event, command, timeout in _HOOKS:
+        entries = hooks_root.setdefault(event, [])
+
+        # Find any existing cclog hook entry — matches both the old
+        # "python -m cclog.hook" style and new "cclog hook" style.
+        existing_entry = None
+        existing_hook = None
+        for entry in entries:
+            for h in entry.get("hooks", []):
+                cmd = h.get("command", "")
+                if "cclog.hook" in cmd or "cclog hook" in cmd:
+                    existing_entry = entry
+                    existing_hook = h
+                    break
+            if existing_hook:
+                break
+
+        if existing_hook is not None:
+            if existing_hook["command"] == command:
+                already.append(event)
+            else:
+                # Wrong python path — update in place
+                existing_hook["command"] = command
+                fixed.append(event)
+            continue
+
+        entries.append({
+            "matcher": "",
+            "hooks": [{"type": "command", "command": command, "timeout": timeout}],
+        })
+        added.append(event)
+
+    changed = added + fixed
+    if changed:
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+
+    if already:
+        _console.print(f"Already up to date: {', '.join(already)}")
+    if fixed:
+        _console.print(f"[green]Fixed hook command for: {', '.join(fixed)}[/green]")
+    if added:
+        _console.print(f"[green]Added hooks for: {', '.join(added)}[/green]")
+    if changed:
+        _console.print(f"Using: {_hook_command('pre')}")
+        _console.print(f"Saved to {settings_path}")
+        _console.print("Restart Claude Code for the hooks to take effect.")
+    else:
+        _console.print("[green]cclog hooks are already installed and up to date.[/green]")
+
+
 def cmd_query(args) -> None:
     sql = args.sql
     db = _db_path()
@@ -432,7 +671,32 @@ def main() -> None:
 
     sub.add_parser("backfill", help="Backfill JSONL token data for all sessions")
 
+    p_prune = sub.add_parser(
+        "prune",
+        help="Strip request/response JSON from old events (keeps token counts and costs)",
+    )
+    p_prune.add_argument(
+        "--days",
+        type=int,
+        default=None,  # resolved in cmd_prune: CCLOG_RETENTION_DAYS or 30
+        help="Strip JSON from events older than this many days (default: CCLOG_RETENTION_DAYS or 30)",
+    )
+    p_prune.add_argument("--dry-run", action="store_true", help="Show what would be removed")
+    p_prune.add_argument("--no-vacuum", action="store_true", help="Skip VACUUM after pruning")
+
+    sub.add_parser(
+        "install-hooks",
+        help="Install cclog hooks into ~/.claude/settings.json (idempotent)",
+    )
+
+    p_hook = sub.add_parser("hook", help="Invoke a hook phase (called by Claude Code hooks)")
+    p_hook.add_argument("phase", choices=["pre", "post", "stop"])
+
     args = parser.parse_args()
+
+    def cmd_hook(args):
+        from cclog.hook import main as hook_main
+        hook_main(args.phase)
 
     commands = {
         "start": cmd_start,
@@ -443,6 +707,9 @@ def main() -> None:
         "sessions": cmd_sessions,
         "query": cmd_query,
         "backfill": cmd_backfill,
+        "prune": cmd_prune,
+        "install-hooks": cmd_install_hooks,
+        "hook": cmd_hook,
     }
 
     if args.command is None:

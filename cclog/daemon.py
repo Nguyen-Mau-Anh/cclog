@@ -41,6 +41,20 @@ def _idle_minutes() -> int:
     return int(os.environ.get("CCLOG_IDLE_MINUTES") or 5)
 
 
+def _retention_days() -> Optional[int]:
+    """Days to keep event request/response JSON, or None to keep forever."""
+    from cclog.prune import retention_days_from_env
+    return retention_days_from_env()
+
+
+_PRUNE_INTERVAL_MS = 24 * 3600 * 1000  # prune at most once a day
+
+# VACUUM rewrites the whole file (cost ~ total DB size, not bytes freed) while
+# holding _db_lock, stalling all requests and writes. Only pay that when the
+# prune actually freed enough to matter.
+_VACUUM_THRESHOLD_BYTES = 50 * 1024 * 1024
+
+
 _MINIMAL_HTML = """<!DOCTYPE html>
 <html><head><title>cclog</title></head>
 <body>
@@ -54,8 +68,20 @@ es.onmessage = e => console.log('SSE:', e.data);
 """
 
 _PACKAGE_DIR = Path(__file__).parent
-_INDEX_HTML_PATH = _PACKAGE_DIR / "web" / "index.html"
-_APP_JS_PATH = _PACKAGE_DIR / "web" / "app.js"
+_DIST_DIR = _PACKAGE_DIR / "web" / "dist"
+
+_EVENTS_DEFAULT_LIMIT = 200
+_EVENTS_MAX_LIMIT = 1000
+
+_ASSET_CONTENT_TYPES = {
+    ".js": "application/javascript",
+    ".css": "text/css",
+    ".map": "application/json",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".png": "image/png",
+    ".woff2": "font/woff2",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +126,7 @@ class CclogDaemon:
         self._http_server: Optional[HTTPServer] = None
         self._socket_thread: Optional[threading.Thread] = None
         self._server_socket: Optional[socket.socket] = None
+        self._last_prune_ms = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -119,6 +146,10 @@ class CclogDaemon:
             target=self._run_socket_listener, daemon=True
         )
         self._socket_thread.start()
+
+        # Daily retention prune (only if CCLOG_RETENTION_DAYS is set)
+        if _retention_days():
+            threading.Thread(target=self._run_retention_loop, daemon=True).start()
 
         # Start HTTP server (blocks until stop())
         self._start_http_server()
@@ -244,8 +275,8 @@ class CclogDaemon:
     # ------------------------------------------------------------------
 
     def _handle_event(self, event: HookEvent, session_name: Optional[str] = None) -> None:
-        self._write_to_db(event, session_name=session_name)
-        self._broadcast_sse(event)
+        summary = self._write_to_db(event, session_name=session_name)
+        self._broadcast_sse(event, summary)
 
     def _get_prev_gross_input(self, conn: Any, session_id: str) -> int:
         row = conn.execute(
@@ -256,10 +287,24 @@ class CclogDaemon:
         ).fetchone()
         return row[0] if row else 0
 
-    def _write_to_db(self, event: HookEvent, session_name: Optional[str] = None) -> None:
+    def _write_to_db(self, event: HookEvent, session_name: Optional[str] = None) -> Dict[str, Any]:
+        """Write event (+ledger for post phase) and return a summary dict
+        suitable for embedding in the SSE broadcast."""
         from cclog.db import get_db
         from cclog.tokens import count_tokens
         from cclog.pricing import get_cost_usd
+
+        summary: Dict[str, Any] = {
+            "id": None,
+            "phase": event.phase,
+            "tool_name": event.tool_name,
+            "occurred_at": event.received_at,
+            "gross_input": None,
+            "gross_output": None,
+            "net_input": None,
+            "cost_usd": None,
+            "counted_by": None,
+        }
 
         with self._db_lock:
             conn = get_db(self.db_path)
@@ -292,6 +337,7 @@ class CclogDaemon:
                     ),
                 )
                 event_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+                summary["id"] = event_id
 
                 # Token ledger (post only)
                 if event.phase == "post":
@@ -319,10 +365,19 @@ class CclogDaemon:
                             model,
                         ),
                     )
+                    summary.update({
+                        "gross_input": result.gross_input,
+                        "gross_output": result.gross_output,
+                        "net_input": result.net_input,
+                        "cost_usd": cost,
+                        "counted_by": result.counted_by,
+                    })
 
                 conn.commit()
             finally:
                 conn.close()
+
+        return summary
 
     def _update_jsonl_tokens(self, data: dict) -> None:
         """Update session with JSONL-sourced accurate token totals."""
@@ -369,15 +424,64 @@ class CclogDaemon:
         self._broadcast_sse_dict({"type": "session_update", "session_id": session_id})
 
     # ------------------------------------------------------------------
+    # Retention pruning
+    # ------------------------------------------------------------------
+
+    def _run_retention_loop(self) -> None:
+        while self._running:
+            try:
+                self._prune_if_due()
+            except Exception:
+                pass  # never let retention kill the daemon
+            for _ in range(60):  # re-check roughly every minute
+                if not self._running:
+                    return
+                time.sleep(1.0)
+
+    def _prune_if_due(self, now_ms: Optional[int] = None):
+        """Strip JSON blobs from events older than CCLOG_RETENTION_DAYS,
+        at most once per _PRUNE_INTERVAL_MS. Returns the PruneResult, or
+        None if retention is off or the prune isn't due yet."""
+        from cclog.db import get_db
+        from cclog.prune import strip_old_event_json, vacuum
+
+        days = _retention_days()
+        if not days:
+            return None
+        if now_ms is None:
+            now_ms = int(time.time() * 1000)
+        if self._last_prune_ms and now_ms - self._last_prune_ms < _PRUNE_INTERVAL_MS:
+            return None
+
+        # Mark attempted up front: a persistently failing prune should wait
+        # for the next daily window, not hammer a heavyweight op every 60s.
+        self._last_prune_ms = now_ms
+
+        cutoff_ms = now_ms - days * 86400 * 1000
+        with self._db_lock:
+            conn = get_db(self.db_path)
+            try:
+                result = strip_old_event_json(conn, cutoff_ms)
+                if result.bytes_freed >= _VACUUM_THRESHOLD_BYTES:
+                    vacuum(conn)
+            finally:
+                conn.close()
+
+        return result
+
+    # ------------------------------------------------------------------
     # SSE broadcasting
     # ------------------------------------------------------------------
 
-    def _broadcast_sse(self, event: HookEvent) -> None:
-        self._broadcast_sse_dict({
-            "type": "session_update",
+    def _broadcast_sse(self, event: HookEvent, summary: Optional[Dict[str, Any]] = None) -> None:
+        msg: Dict[str, Any] = {
+            "type": "event",
             "session_id": event.session_id,
             "timestamp": event.received_at,
-        })
+        }
+        if summary is not None:
+            msg["event"] = summary
+        self._broadcast_sse_dict(msg)
 
     def _broadcast_sse_dict(self, msg: dict) -> None:
         """Broadcast an arbitrary dict as an SSE event."""
@@ -416,17 +520,24 @@ class CclogDaemon:
                 pass  # suppress access logs
 
             def do_GET(self) -> None:  # noqa: N802
-                path = self.path.split("?")[0]
+                from urllib.parse import urlparse, parse_qs
 
-                if path == "/":
+                parsed = urlparse(self.path)
+                path = parsed.path
+                query = parse_qs(parsed.query)
+
+                if path == "/" or path == "/index.html":
                     self._serve_index()
-                elif path == "/app.js":
-                    self._serve_app_js()
+                elif path.startswith("/assets/"):
+                    self._serve_asset(path)
                 elif path == "/api/sessions":
                     self._serve_sessions()
                 elif path.startswith("/api/events/"):
                     event_id = path[len("/api/events/"):]
                     self._serve_event_json(event_id)
+                elif path.startswith("/api/sessions/") and path.endswith("/events"):
+                    session_id = path[len("/api/sessions/"):-len("/events")]
+                    self._serve_session_events(session_id, query)
                 elif path.startswith("/api/sessions/"):
                     session_id = path[len("/api/sessions/"):]
                     self._serve_session_detail(session_id)
@@ -438,26 +549,41 @@ class CclogDaemon:
                     self.send_error(404, "Not Found")
 
             def _serve_index(self) -> None:
-                if _INDEX_HTML_PATH.exists():
-                    content = _INDEX_HTML_PATH.read_bytes()
-                    content_type = "text/html"
+                index_path = _DIST_DIR / "index.html"
+                if index_path.exists():
+                    content = index_path.read_bytes()
                 else:
                     content = _MINIMAL_HTML.encode()
-                    content_type = "text/html"
                 self.send_response(200)
-                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Type", "text/html")
                 self.send_header("Content-Length", str(len(content)))
                 self.end_headers()
                 self.wfile.write(content)
 
-            def _serve_app_js(self) -> None:
-                if not _APP_JS_PATH.exists():
+            def _serve_asset(self, path: str) -> None:
+                """Serve a built asset from the dist directory, traversal-safe."""
+                rel = path.lstrip("/")
+                try:
+                    target = (_DIST_DIR / rel).resolve()
+                    dist_root = _DIST_DIR.resolve()
+                except OSError:
+                    self.send_error(400, "Bad Request")
+                    return
+                if dist_root not in target.parents:
                     self.send_error(404, "Not Found")
                     return
-                content = _APP_JS_PATH.read_bytes()
+                if not target.is_file():
+                    self.send_error(404, "Not Found")
+                    return
+                content_type = _ASSET_CONTENT_TYPES.get(
+                    target.suffix, "application/octet-stream"
+                )
+                content = target.read_bytes()
                 self.send_response(200)
-                self.send_header("Content-Type", "application/javascript")
+                self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(content)))
+                # Vite assets are content-hashed — safe to cache aggressively
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
                 self.end_headers()
                 self.wfile.write(content)
 
@@ -535,12 +661,15 @@ class CclogDaemon:
             def _serve_event_json(self, event_id: str) -> None:
                 from cclog.db import get_db
                 try:
-                    conn = get_db(_default_db_path())
-                    row = conn.execute(
-                        "SELECT input_json, output_json FROM events WHERE id = ?",
-                        (event_id,),
-                    ).fetchone()
-                    conn.close()
+                    with daemon._db_lock:
+                        conn = get_db(daemon.db_path)
+                        try:
+                            row = conn.execute(
+                                "SELECT input_json, output_json FROM events WHERE id = ?",
+                                (event_id,),
+                            ).fetchone()
+                        finally:
+                            conn.close()
                 except Exception:
                     self.send_error(500, "DB error")
                     return
@@ -568,7 +697,7 @@ class CclogDaemon:
 
                 found = False
                 row = None
-                event_rows = []
+                breakdown_rows = []
 
                 with daemon._db_lock:
                     conn = get_db(daemon.db_path)
@@ -602,22 +731,20 @@ class CclogDaemon:
                         if sess_rows:
                             found = True
                             row = sess_rows[0]
-                            event_rows = conn.execute(
+                            breakdown_rows = conn.execute(
                                 """
                                 SELECT
-                                    e.id,
-                                    e.phase,
-                                    e.tool_name,
-                                    e.occurred_at,
-                                    tl.gross_input,
-                                    tl.gross_output,
-                                    tl.net_input,
-                                    tl.cost_usd,
-                                    tl.counted_by
+                                    COALESCE(e.tool_name, 'unknown') AS tool_name,
+                                    COUNT(*) AS calls,
+                                    COALESCE(SUM(
+                                        COALESCE(tl.gross_input, 0) + COALESCE(tl.gross_output, 0)
+                                    ), 0) AS tokens,
+                                    COALESCE(SUM(tl.cost_usd), 0.0) AS cost_usd
                                 FROM events e
                                 LEFT JOIN token_ledger tl ON tl.event_id = e.id
                                 WHERE e.session_id = ?
-                                ORDER BY e.occurred_at ASC
+                                GROUP BY COALESCE(e.tool_name, 'unknown')
+                                ORDER BY cost_usd DESC
                                 """,
                                 (session_id,),
                             ).fetchall()
@@ -640,19 +767,15 @@ class CclogDaemon:
                     else:
                         status = "closed"
 
-                events_list = []
-                for er in event_rows:
-                    events_list.append({
-                        "id": er["id"],
-                        "phase": er["phase"],
-                        "tool_name": er["tool_name"],
-                        "occurred_at": er["occurred_at"],
-                        "gross_input": er["gross_input"],
-                        "gross_output": er["gross_output"],
-                        "net_input": er["net_input"],
-                        "cost_usd": er["cost_usd"],
-                        "counted_by": er["counted_by"],
-                    })
+                tool_breakdown = [
+                    {
+                        "tool_name": br["tool_name"],
+                        "calls": br["calls"],
+                        "tokens": br["tokens"],
+                        "cost_usd": br["cost_usd"],
+                    }
+                    for br in breakdown_rows
+                ]
 
                 result = {
                     "id": row["id"],
@@ -670,9 +793,86 @@ class CclogDaemon:
                     "jsonl_cache_read_tokens": row["jsonl_cache_read_tokens"],
                     "jsonl_cost_usd": row["jsonl_cost_usd"],
                     "jsonl_model": row["jsonl_model"],
-                    "events": events_list,
+                    "tool_breakdown": tool_breakdown,
                 }
                 self._send_json(result)
+
+            def _serve_session_events(self, session_id: str, query: Dict[str, List[str]]) -> None:
+                """Paginated events for one session, newest first.
+
+                Query params (all optional, bad values clamped; 0 means "absent"
+                — safe because occurred_at is epoch-ms, never legitimately 0):
+                  since     — inclusive lower bound on occurred_at (ms)
+                  before    — exclusive upper bound on occurred_at (ms); cursor for "load older"
+                  before_id — tiebreaker id for `before`: pages continue after the row
+                              (occurred_at=before, id=before_id), so events sharing a
+                              millisecond across a page boundary are not skipped
+                  limit     — page size, default 200, max 1000
+                """
+                from cclog.db import get_db
+
+                def _int_param(name: str, default: int) -> int:
+                    try:
+                        return max(0, int(query.get(name, [default])[0]))
+                    except (ValueError, TypeError):
+                        return default
+
+                since = _int_param("since", 0)
+                before = _int_param("before", 0)
+                before_id = _int_param("before_id", 0)
+                limit = _int_param("limit", _EVENTS_DEFAULT_LIMIT)
+                limit = min(max(limit, 1), _EVENTS_MAX_LIMIT)
+
+                sql = (
+                    "SELECT e.id, e.phase, e.tool_name, e.occurred_at, "
+                    "tl.gross_input, tl.gross_output, tl.net_input, tl.cost_usd, tl.counted_by "
+                    "FROM events e LEFT JOIN token_ledger tl ON tl.event_id = e.id "
+                    "WHERE e.session_id = ?"
+                )
+                params: List[Any] = [session_id]
+                if since:
+                    sql += " AND e.occurred_at >= ?"
+                    params.append(since)
+                if before and before_id:
+                    # Keyset cursor on the full (occurred_at, id) sort key
+                    sql += " AND (e.occurred_at < ? OR (e.occurred_at = ? AND e.id < ?))"
+                    params.extend([before, before, before_id])
+                elif before:
+                    sql += " AND e.occurred_at < ?"
+                    params.append(before)
+                sql += " ORDER BY e.occurred_at DESC, e.id DESC LIMIT ?"
+                params.append(limit + 1)  # one extra row to detect has_more
+
+                with daemon._db_lock:
+                    conn = get_db(daemon.db_path)
+                    try:
+                        exists = conn.execute(
+                            "SELECT 1 FROM sessions WHERE id = ?", (session_id,)
+                        ).fetchone()
+                        rows = conn.execute(sql, params).fetchall() if exists else []
+                    finally:
+                        conn.close()
+
+                if not exists:
+                    self.send_error(404, "Session not found")
+                    return
+
+                has_more = len(rows) > limit
+                events = [
+                    {
+                        "id": r["id"],
+                        "phase": r["phase"],
+                        "tool_name": r["tool_name"],
+                        "occurred_at": r["occurred_at"],
+                        "gross_input": r["gross_input"],
+                        "gross_output": r["gross_output"],
+                        "net_input": r["net_input"],
+                        "cost_usd": r["cost_usd"],
+                        "counted_by": r["counted_by"],
+                    }
+                    for r in rows[:limit]
+                ]
+                self._send_json({"events": events, "has_more": has_more})
 
             def _serve_status(self) -> None:
                 from cclog.db import get_db

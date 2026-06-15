@@ -4,7 +4,10 @@ import json
 import os
 import socket
 import sqlite3
+import tempfile
 import threading
+from pathlib import Path
+
 import pytest
 
 from cclog.db import get_db
@@ -110,7 +113,9 @@ def test_hook_always_exits_zero_on_error(tmp_path, monkeypatch):
 
 def test_hook_sends_to_daemon_when_socket_exists(tmp_path, monkeypatch):
     """When a Unix socket server is listening, hook sends JSON line and skips DB."""
-    sock_path = str(tmp_path / "test_daemon.sock")
+    # AF_UNIX paths are limited to ~104 chars on macOS; pytest tmp_path
+    # routinely exceeds that. Use a short /tmp dir instead.
+    sock_path = str(Path(tempfile.mkdtemp(prefix="cclog-", dir="/tmp")) / "test_daemon.sock")
     received = []
     ready = threading.Event()
     done = threading.Event()
