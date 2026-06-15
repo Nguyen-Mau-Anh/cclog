@@ -448,43 +448,82 @@ def cmd_prune(args) -> None:
         conn.close()
 
 
-def _hook_command_prefix() -> str:
-    """Return the command prefix used in hook entries: either the installed
-    'cclog' script (preferred — shebang is baked in at install time and works
-    on every OS) or a full 'python -m cclog.hook' fallback using the exact
-    interpreter that is currently running the CLI.
+def _probe_python(py: str) -> bool:
+    """Return True if py can import cclog in a clean environment.
 
-    Never returns bare 'python3' — that resolves differently per platform and
-    Claude Code's hook runner may use a different PATH than the terminal."""
+    Uses a minimal env (no PYTHONPATH, no VIRTUAL_ENV) to simulate the
+    stripped-down environment Claude Code uses when running hooks — a Python
+    that only works because of shell-profile side-effects will fail here."""
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX",
+                     "CONDA_DEFAULT_ENV", "PYTHONHOME")
+    }
+    try:
+        r = subprocess.run(
+            [py, "-c", "import cclog"],
+            capture_output=True, timeout=5, env=env,
+        )
+        return r.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _hook_command_prefix() -> str:
+    """Return the command prefix for hook entries.
+
+    Priority:
+    1. Installed 'cclog' script whose shebang already points to the right
+       Python (created by pip install).
+    2. First Python candidate that can import cclog in a clean environment
+       (simulates Claude Code's hook runner which strips shell-profile vars).
+
+    Never uses bare 'python3' — that resolves via PATH which differs between
+    the user's terminal and Claude Code's hook subprocess."""
     import shutil
     import sysconfig
 
     is_win = sys.platform == "win32"
     names = ["cclog.exe", "cclog"] if is_win else ["cclog"]
 
-    # 1. Scripts dir of the Python currently running cclog (most reliable).
-    for scheme in (None, "posix_user", "nt_user"):
-        try:
-            scripts_dir = (
-                sysconfig.get_path("scripts", scheme)
-                if scheme
-                else sysconfig.get_path("scripts")
-            )
-        except (KeyError, TypeError):
+    # 1. cclog script in the scripts dir of each candidate Python.
+    py_candidates = [
+        sys.executable,
+        "/opt/homebrew/bin/python3",
+        "/opt/homebrew/bin/python3.13",
+        "/opt/homebrew/bin/python3.12",
+        "/opt/homebrew/bin/python3.11",
+        "/usr/local/bin/python3",
+    ]
+    seen: set = set()
+    for py in py_candidates:
+        if py in seen or not os.path.isfile(py):
             continue
+        seen.add(py)
+        try:
+            scripts_dir = subprocess.run(
+                [py, "-c", "import sysconfig; print(sysconfig.get_path('scripts'))"],
+                capture_output=True, text=True, timeout=3,
+            ).stdout.strip()
+        except Exception:
+            scripts_dir = ""
         if scripts_dir:
             for name in names:
                 candidate = os.path.join(scripts_dir, name)
                 if os.path.isfile(candidate):
-                    return candidate  # caller appends " hook <phase>"
+                    return candidate
 
-    # 2. Anything named 'cclog' on PATH.
+    # 2. cclog on PATH.
     found = shutil.which("cclog")
     if found:
         return found
 
-    # 3. No cclog script found — fall back to the explicit Python path so we
-    #    skip the platform shim and load the same site-packages as the CLI.
+    # 3. First Python that can import cclog without relying on shell env.
+    for py in py_candidates:
+        if os.path.isfile(py) and _probe_python(py):
+            return f"{py} -m cclog.hook"
+
+    # Last resort: current interpreter (may fail in Claude Code's env).
     return f"{sys.executable} -m cclog.hook"
 
 
